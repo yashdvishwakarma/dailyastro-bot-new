@@ -1,0 +1,21 @@
+{
+  "name": "astronow",
+  "version": "1.0.0",
+  "main": "astronowbot.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+     "start": "node index.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@supabase/supabase-js": "^2.78.0",
+    "cron": "^4.3.3",
+    "dotenv": "^17.2.3",
+    "node-cron": "^4.2.1",
+    "node-telegram-bot-api": "^0.63.0",
+    "openai": "^6.7.0"
+  }
+}
