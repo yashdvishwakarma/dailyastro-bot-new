@@ -9,15 +9,13 @@ import TelegramBot from "node-telegram-bot-api";
 import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import cron from "node-cron";
-
+import express from "express";
 // ========== INIT ==========
 const token = process.env.TELEGRAM_TOKEN;
 const openaiKey = process.env.OPENAI_KEY;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 
-import express from "express";
-import TelegramBot from "node-telegram-bot-api";
 
 const bot = new TelegramBot(token);
 const app = express();
