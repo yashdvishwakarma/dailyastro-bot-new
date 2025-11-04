@@ -16,15 +16,28 @@ const openaiKey = process.env.OPENAI_KEY;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 
-const bot = new TelegramBot(token, { 
-  polling: {
-    interval: 300,
-    autoStart: true,
-    params: {
-      timeout: 10
-    }
-  }
+import express from "express";
+import TelegramBot from "node-telegram-bot-api";
+
+const bot = new TelegramBot(token);
+const app = express();
+
+// Telegram webhook endpoint
+app.use(express.json());
+
+app.post(`/webhook/${token}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
 });
+
+// Set webhook
+const URL = process.env.VERCEL_URL || "https://dailyastro-bot-new.onrender.com";
+bot.setWebHook(`${URL}/webhook/${token}`);
+
+console.log(`✅ Webhook set: ${URL}/webhook/${token}`);
+
+export default app;
+
 
 const openai = new OpenAI({ apiKey: openaiKey });
 const supabase = createClient(supabaseUrl, supabaseKey);
