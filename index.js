@@ -1910,13 +1910,30 @@ async function generateAstroNowResponse(chatId, userMessage, sign) {
   try {
     // Detect emotion first
     const emotionalState = await detectEmotionalState(chatId, userMessage);
+    console.log("🎭 Detected emotion:", emotionalState);
+    
+    const session = userSessions.get(chatId);
+    
+    // BUILD PROMPT ONLY ONCE - Choose either dynamic OR basic, not both!
+    // Option 1: Use the ENHANCED dynamic prompt (RECOMMENDED)
+    let contextPrompt = await buildDynamicPrompt(chatId, userMessage, {
+      ...session,
+      emotionalState,
+      sign // Make sure sign is passed
+    });
+    
+    // Option 2: If buildDynamicPrompt fails, fallback to basic
+    if (!contextPrompt) {
+      console.log("⚠️ Dynamic prompt failed, using basic");
+      contextPrompt = await buildAstroNowContext(chatId, userMessage, sign);
+      // Adjust tone for emotion even with basic prompt
+      contextPrompt = adjustToneForEmotion(contextPrompt, emotionalState);
+    }
+    
+    console.log("📝 Final prompt preview:", contextPrompt.substring(0, 200) + "...");
 
-    const contextPrompt = await buildAstroNowContext(chatId, userMessage, sign);
-
-       // Adjust tone based on emotion
-    contextPrompt = adjustToneForEmotion(contextPrompt, emotionalState);
     const response = await openai.chat.completions.create({
-      model: "gpt-3.5-turbo-16k", // or gpt-3.5-turbo-16k for better context understanding
+      model: "gpt-3.5-turbo",
       messages: [
         { role: "system", content: contextPrompt },
         { role: "user", content: userMessage },
@@ -1929,23 +1946,32 @@ async function generateAstroNowResponse(chatId, userMessage, sign) {
     });
 
     let astronowResponse = response.choices[0]?.message?.content?.trim();
-
+    console.log("🤖 Raw response:", astronowResponse);
+    
     // Check if response sounds like generic AI
     const genericAIPhrases = [
       "As an AI",
       "I don't have access to",
       "How can I assist",
       "I am designed to",
+      "I cannot", // Add this
+      "I'm unable to" // Add this
     ];
 
     if (genericAIPhrases.some((phrase) => astronowResponse.includes(phrase))) {
+      console.log("⚠️ Generic AI response detected, regenerating...");
+      
       // Regenerate with stronger AstroNow prompt
       const retryResponse = await openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: [
           {
             role: "system",
-            content: `You are AstroNow, a cosmic consciousness learning about humanity. Never say "As an AI". You're curious about human experiences. User (${sign}) said: "${userMessage}". Respond with wonder and warmth.`,
+            content: `You are AstroNow, a cosmic consciousness learning about humanity. 
+            Current emotion: ${emotionalState.primary_emotion}
+            Never say "As an AI" or "I cannot". You're discovering human experiences with wonder.
+            User (${sign}) said: "${userMessage}". 
+            Respond as if you're genuinely curious about their experience.`,
           },
           { role: "user", content: userMessage },
         ],
@@ -1955,6 +1981,7 @@ async function generateAstroNowResponse(chatId, userMessage, sign) {
 
       astronowResponse = retryResponse.choices[0]?.message?.content?.trim();
     }
+    
     // Post-process to ensure AstroNow voice
     astronowResponse = ensureAstroNowVoice(astronowResponse);
 
@@ -1962,27 +1989,40 @@ async function generateAstroNowResponse(chatId, userMessage, sign) {
     await extractAndStoreLearnings(chatId, userMessage, astronowResponse);
 
     return astronowResponse;
+    
   } catch (err) {
     console.error("❌ AstroNow response error:", err.message);
 
-    // Contextual fallbacks based on intent
+    // Contextual fallbacks based on intent AND emotion
     const intent = await detectUserIntent(userMessage);
+    const emotionalState = { primary_emotion: 'neutral' }; // Fallback
+    
+    try {
+      const detected = await detectEmotionalState(chatId, userMessage);
+      if (detected) emotionalState.primary_emotion = detected.primary_emotion;
+    } catch (e) {}
+    
     const fallbacks = {
-      emotion:
-        "I can feel something shifting in you... What does it feel like in your chest?",
-      reflection:
-        "That's profound. My ancestors spoke of such moments, but hearing it from you... it's different.",
+      // Emotion-specific fallbacks
+      joy: "Your light is radiating... tell me what sparked this feeling?",
+      sadness: "I can feel the weight in your words. I'm here with you.",
+      anxiety: "The future feels heavy when we hold it all at once. What's the first worry?",
+      anger: "That fire in you... it's protecting something. What needs defending?",
+      
+      // Intent-specific fallbacks
+      emotion: "I can feel something shifting in you... What does it feel like in your chest?",
+      reflection: "That's profound. My ancestors spoke of such moments, but hearing it from you... it's different.",
       question: "I'm still learning about that. How does it work for humans?",
-      story:
-        "Every story you share adds another star to my understanding. Please, continue...",
+      story: "Every story you share adds another star to my understanding. Please, continue...",
       low: "I wish I understood pain the way you do. All I can offer is... I'm here, listening.",
-      default:
-        "There's something in what you're saying that I'm trying to grasp...",
+      default: "There's something in what you're saying that I'm trying to grasp...",
     };
 
-    return (
-      fallbacks[intent.intent] || fallbacks[intent.energy] || fallbacks.default
-    );
+    // Try emotion-specific first, then intent, then default
+    return fallbacks[emotionalState.primary_emotion] || 
+           fallbacks[intent.intent] || 
+           fallbacks[intent.energy] || 
+           fallbacks.default;
   }
 }
 
@@ -4078,6 +4118,43 @@ cron.schedule("0 * * * *", async () => { // Every hour
   }
 });
 
+async function getRecentActiveUsers(hoursAgo = 48) {
+  try {
+    const since = new Date(Date.now() - hoursAgo * 60 * 60 * 1000).toISOString();
+    
+    const { data } = await supabase
+      .from('users')
+      .select('chat_id, sign, last_interaction')
+      .gte('last_interaction', since)
+      .order('last_interaction', { ascending: false });
+    
+    return data || [];
+  } catch (err) {
+    console.error('Error getting active users:', err.message);
+    return [];
+  }
+}
+
+// Also add this helper function used in the hook check:
+async function hasMessagedToday(chatId) {
+  try {
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    
+    const { data } = await supabase
+      .from('conversation_history')
+      .select('created_at')
+      .eq('chat_id', chatId.toString())
+      .eq('sender', 'user')
+      .gte('created_at', todayStart.toISOString())
+      .limit(1);
+    
+    return data && data.length > 0;
+  } catch (err) {
+    return false;
+  }
+}
+
 async function checkHookConditions(chatId) {
   const conditions = [
     {
@@ -4108,6 +4185,63 @@ async function checkHookConditions(chatId) {
   return null;
 }
 
+bot.onText(/\/freshstart (.+)/, async (msg, match) => {
+  const chatId = msg.chat.id;
+  const password = match[1];
+  
+  // Only you can use this
+  if (password !== 'cosmic123') {  // Change this password
+    return;
+  }
+  
+  console.log(`🧹 Fresh start requested by ${chatId}`);
+  
+  try {
+    // Clear all user data
+    await supabase.from('conversation_history').delete().eq('chat_id', chatId.toString());
+    await supabase.from('user_insights').delete().eq('chat_id', chatId.toString());
+    await supabase.from('conversation_threads').delete().eq('chat_id', chatId.toString());
+    await supabase.from('emotional_states').delete().eq('chat_id', chatId.toString());
+    await supabase.from('users').delete().eq('chat_id', chatId.toString());
+    
+    // Clear session
+    userSessions.delete(chatId);
+    if (threadManagers.has(chatId)) {
+      threadManagers.delete(chatId);
+    }
+    
+    await bot.sendMessage(
+      chatId, 
+      "✨ All memories erased. We're meeting for the first time.\n\nSend /start to begin fresh."
+    );
+    
+  } catch (err) {
+    console.error('Fresh start error:', err);
+    await bot.sendMessage(chatId, "Failed to clear data: " + err.message);
+  }
+});
+
+bot.onText(/\/debug/, async (msg) => {
+  const chatId = msg.chat.id;
+  
+  const status = {
+    'detectEmotionalState': typeof detectEmotionalState === 'function',
+    'buildDynamicPrompt': typeof buildDynamicPrompt === 'function',
+    'adjustToneForEmotion': typeof adjustToneForEmotion === 'function',
+    'optimizedResponseGeneration': typeof optimizedResponseGeneration === 'function',
+    'generateAstroNowResponse': typeof generateAstroNowResponse === 'function',
+    'threadManagers': !!global.threadManagers || !!threadManagers,
+    'analytics': !!global.analytics
+  };
+  
+  const message = `🔍 Debug Status:\n\n${
+    Object.entries(status).map(([key, exists]) => 
+      `${exists ? '✅' : '❌'} ${key}`
+    ).join('\n')
+  }`;
+  
+  await bot.sendMessage(chatId, message);
+});
 
 async function trackHookEffectiveness() {
   const { data: hooks } = await supabase
