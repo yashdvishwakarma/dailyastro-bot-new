@@ -9,16 +9,21 @@ import OpenAI from "openai";
 import { createClient } from "@supabase/supabase-js";
 import cron from "node-cron";
 import express from "express";
+
+
 // ========== INIT ==========
 const token = process.env.TELEGRAM_TOKEN;
 const openaiKey = process.env.OPENAI_KEY;
 const supabaseUrl = process.env.SUPABASE_URL;
 const supabaseKey = process.env.SUPABASE_KEY;
 
+const PORT = process.env.PORT || 3000;
 const bot = new TelegramBot(token);
 const app = express();
 
-
+console.log('Starting server setup...');
+console.log('PORT from env:', process.env.PORT);
+console.log('TOKEN exists:', !!token);
 
 // Telegram webhook endpoint
 app.use(express.json());
@@ -37,6 +42,13 @@ app.get('/health', (req, res) => {
   res.status(200).json({ status: 'healthy', bot: 'AstroNow' });
 });
 
+// Start server IMMEDIATELY (before any async operations)
+const server = app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+  console.log(`🌐 Webhook URL: ${process.env.RENDER_EXTERNAL_URL}/webhook/${token}`);
+});
+
+
 
 const threadManagers = new Map();
 
@@ -45,6 +57,12 @@ const URL = process.env.VERCEL_URL || "https://dailyastro-bot-new.onrender.com";
 bot.setWebHook(`${URL}/webhook/${token}`);
 
 console.log(`✅ Webhook set: ${URL}/webhook/${token}`);
+// THEN do your bot setup
+bot.setWebHook(`${URL}/webhook/${token}`).then(() => {
+  console.log(`✅ Webhook set: ${URL}/webhook/${token}`);
+}).catch(err => {
+  console.error('❌ Webhook setup failed:', err);
+});
 
 export default app;
 
@@ -4324,3 +4342,7 @@ async function startServer() {
 }
 
 startup()
+startup().catch(err => {
+  console.error('Bot startup failed:', err);
+  // Keep server running even if bot fails
+});
