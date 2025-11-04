@@ -18,6 +18,8 @@ const supabaseKey = process.env.SUPABASE_KEY;
 const bot = new TelegramBot(token);
 const app = express();
 
+
+
 // Telegram webhook endpoint
 app.use(express.json());
 
@@ -25,6 +27,16 @@ app.post(`/webhook/${token}`, (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
+
+// Add a health check endpoint for Render:
+app.get('/', (req, res) => {
+  res.send('AstroNow Bot is running! 🌙');
+});
+
+app.get('/health', (req, res) => {
+  res.status(200).json({ status: 'healthy', bot: 'AstroNow' });
+});
+
 
 const threadManagers = new Map();
 
@@ -4289,6 +4301,26 @@ cron.schedule("0 4 * * *", async () => {
 });
 
 
-
+async function startServer() {
+  try {
+    const PORT = process.env.PORT || 3000;
+    
+    app.listen(PORT, '0.0.0.0', () => {
+      console.log(`🚀 Server running on port ${PORT}`);
+      console.log(`✅ Render should detect port ${PORT} now`);
+      
+      // Start the bot AFTER server is running
+      startup().catch(err => {
+        console.error('Bot startup failed:', err);
+        // But keep server running for Render
+      });
+    });
+    
+  } catch (err) {
+    console.error('Server start error:', err);
+    // Exit so Render knows to restart
+    process.exit(1);
+  }
+}
 
 startup()
