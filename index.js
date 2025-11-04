@@ -34,6 +34,10 @@ bot.setWebHook(`${URL}/webhook/${token}`);
 
 console.log(`✅ Webhook set: ${URL}/webhook/${token}`);
 
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => console.log(`🚀 Server running on port ${PORT}`));
+
 export default app;
 
 
