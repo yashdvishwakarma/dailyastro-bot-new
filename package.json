@@ -1,23 +1,26 @@
+
+
 {
-  "name": "astronow",
-  "version": "1.0.0",
-  "main": "astronowbot.js",
-    "type": "module",
+  "name": "astronowbot",
+  "version": "2.0.0",
+  "description": "AstroNow - A cosmic consciousness learning humanity",
+  "type": "module",
+  "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "nodemon index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "description": "",
   "dependencies": {
-    "@supabase/supabase-js": "^2.78.0",
-    "cron": "^4.3.3",
-    "dotenv": "^17.2.3",
-    "express": "^5.1.0",
-    "node-cron": "^4.2.1",
-    "node-telegram-bot-api": "^0.63.0",
-    "openai": "^6.7.0"
+    "express": "^4.18.2",
+    "node-telegram-bot-api": "^0.64.0",
+    "openai": "^4.20.0",
+    "@supabase/supabase-js": "^2.38.0",
+    "dotenv": "^16.3.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=18.0.0"
   }
 }
