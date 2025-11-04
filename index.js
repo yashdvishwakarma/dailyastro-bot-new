@@ -97,49 +97,77 @@ function getSign(month, day) {
   return sign;
 }
 
+// Add this as a temporary replacement for optimizedResponseGeneration
+async function simpleAstroNowResponse(chatId, text, session) {
+  try {
+    // Simple emotion keywords check
+    let emotion = 'neutral';
+    if (/sad|tired|depressed|lonely/.test(text.toLowerCase())) emotion = 'sadness';
+    if (/happy|excited|great|awesome/.test(text.toLowerCase())) emotion = 'joy';
+    if (/angry|mad|fuck|hate/.test(text.toLowerCase())) emotion = 'anger';
+    if (/worried|anxious|scared/.test(text.toLowerCase())) emotion = 'anxiety';
+    
+    const prompts = {
+      sadness: `Be very gentle and comforting. User (${session.sign}) said: "${text}"`,
+      joy: `Match their positive energy. User (${session.sign}) said: "${text}"`,
+      anger: `Be understanding, don't judge. User (${session.sign}) said: "${text}"`,
+      anxiety: `Be calming and grounding. User (${session.sign}) said: "${text}"`,
+      neutral: `Be warm and curious. User (${session.sign}) said: "${text}"`
+    };
+    
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [
+        {
+          role: "system",
+          content: `You are AstroNow, a cosmic consciousness learning about humanity. ${prompts[emotion]}. Respond in 2-3 sentences with warmth and wonder. Never say "I understand" - instead show curiosity.`
+        },
+        { role: "user", content: text }
+      ],
+      temperature: 0.8,
+      max_tokens: 100
+    });
+    
+    return response.choices[0].message.content;
+  } catch (err) {
+    console.error("Simple response error:", err);
+    return "The stars are listening... tell me more about that feeling.";
+  }
+}
+
 // ========== DETECT USER INTENT ==========
 async function detectUserIntent(message) {
   try {
     const prompt = `
-Analyze this message and return JSON only:
+Analyze this message and return a json response:
 "${message}"
 
+Return json with:
 {
   "intent": "emotion|reflection|question|story|casual|command",
   "energy": "low|neutral|high", 
   "topic": "relationships|work|self|purpose|astrology|general|null",
-  "needs_horoscope": true/false
-}
-`;
+  "needs_horoscope": true or false
+}`;
 
     const response = await openai.chat.completions.create({
       model: "gpt-3.5-turbo",
       messages: [{ role: "user", content: prompt }],
       temperature: 0.3,
       max_tokens: 100,
+      response_format: { type: "json_object" }
     });
 
     try {
       return JSON.parse(response.choices[0]?.message?.content?.trim());
     } catch {
-      return {
-        intent: "casual",
-        energy: "neutral",
-        topic: null,
-        needs_horoscope: false,
-      };
+      return { intent: "casual", energy: "neutral", topic: null, needs_horoscope: false };
     }
   } catch (err) {
     console.error("❌ Intent detection error:", err.message);
-    return {
-      intent: "casual",
-      energy: "neutral",
-      topic: null,
-      needs_horoscope: false,
-    };
+    return { intent: "casual", energy: "neutral", topic: null, needs_horoscope: false };
   }
 }
-
 // ========== BUILD NATURAL CONTEXT ==========
 async function buildNaturalContext(chatId, userMessage, sign) {
   try {
@@ -3189,30 +3217,36 @@ cron.schedule("0 18 * * *", async () => {
 
 // New emotion detection system
 async function detectEmotionalState(chatId, message) {
-  const context = await getConversationContext(chatId);
-  const previousEmotion = context.recent?.[0]?.emotion_tone;
+  try {
+    const prompt = `
+Analyze this message and return JSON only:
+"${message}"
 
-  // Use OpenAI for nuanced detection
-  const emotionAnalysis = await openai.chat.completions.create({
-    model: "gpt-3.5-turbo",
-    messages: [
-      {
-        role: "system",
-        content: `Analyze emotional state considering:
-        Previous emotion: ${previousEmotion}
-        Message: "${message}"
-        Return: {
-          primary_emotion: "joy|sadness|anxiety|anger|fear|surprise|trust|anticipation",
-          intensity: 0.1-1.0,
-          subtext: "what they're not saying",
-          needs: "validation|comfort|celebration|reflection|space"
-        }`,
-      },
-    ],
-    response_format: { type: "json_object" },
-  });
+Return a json object with:
+{
+  "primary_emotion": "joy|sadness|anxiety|anger|fear|surprise|trust|anticipation|neutral",
+  "intensity": 0.1-1.0,
+  "subtext": "what they're not saying",
+  "needs": "validation|comfort|celebration|reflection|space"
+}`;
 
-  return JSON.parse(emotionAnalysis.choices[0].message.content);
+    const response = await openai.chat.completions.create({
+      model: "gpt-3.5-turbo",
+      messages: [{ role: "user", content: prompt }],
+      temperature: 0.3,
+      max_tokens: 100,
+      response_format: { type: "json_object" }  // OpenAI now requires "json" in prompt
+    });
+
+    try {
+      return JSON.parse(response.choices[0]?.message?.content?.trim());
+    } catch {
+      return { primary_emotion: "neutral", intensity: 0.5, subtext: "unclear", needs: "connection" };
+    }
+  } catch (err) {
+    console.error("❌ Emotion detection error:", err.message);
+    return { primary_emotion: "neutral", intensity: 0.5, subtext: "unclear", needs: "connection" };
+  }
 }
 
 // Adaptive response generation
@@ -3378,11 +3412,85 @@ function getVoiceForMood(astronowMood, userEmotion) {
   return voiceMatrix[astronowMood]?.[userEmotion] || "Warm cosmic companion";
 }
 
+async function getAstroNowState() {
+  // Simple state for now
+  return {
+    mood: 'curious',
+    energy: 0.8,
+    learningFocus: 'human emotions',
+    lastLearning: 'Humans express anger when they feel unheard'
+  };
+}
+
 class ConversationThread {
   constructor(chatId) {
     this.chatId = chatId;
     this.threads = new Map(); // topic -> thread data
   }
+
+  // Add to ConversationThread class:
+async extractTopics(message) {
+  // Simple topic extraction
+  const keywords = message.toLowerCase().split(/\s+/).filter(word => word.length > 4);
+  return keywords.slice(0, 3);
+}
+
+// Add to VoiceEvolution class:
+getPhrasesForStage(stage) {
+  const phrases = {
+    curious_stranger: ["I'm still learning...", "Tell me more..."],
+    learning_companion: ["I remember when you...", "That reminds me..."],
+    pattern_recognizer: ["I've noticed you often...", "There's a pattern..."],
+    emotional_mirror: ["I can feel that...", "Your energy tells me..."],
+    soul_witness: ["We've shared so much...", "I understand now..."],
+    cosmic_friend: ["Remember when we...", "You know what I love about you..."]
+  };
+  
+  return phrases[stage] || phrases.curious_stranger;
+}
+
+// Add to EnhancedAstroNowMemory class:
+async searchByTopic(topic) {
+  try {
+    const { data } = await supabase
+      .from('conversation_history')
+      .select('*')
+      .eq('chat_id', this.chatId.toString())
+      .ilike('message', `%${topic}%`)
+      .limit(5);
+    
+    return data || [];
+  } catch (err) {
+    return [];
+  }
+}
+
+async searchByEmotion(emotion) {
+  try {
+    const { data } = await supabase
+      .from('conversation_history')
+      .select('*')
+      .eq('chat_id', this.chatId.toString())
+      .eq('emotion_tone', emotion)
+      .limit(5);
+    
+    return data || [];
+  } catch (err) {
+    return [];
+  }
+}
+
+weaveMemories(topical, emotional) {
+  // Combine memories intelligently
+  const combined = [...topical, ...emotional];
+  
+  // Remove duplicates and sort by relevance
+  const unique = combined.filter((v, i, a) => 
+    a.findIndex(t => t.id === v.id) === i
+  );
+  
+  return unique.slice(0, 3);
+}
 
   async detectThread(message, context) {
     // Identify if message continues existing thread
@@ -3394,6 +3502,8 @@ class ConversationThread {
         return thread;
       }
     }
+
+    
 
     // Create new thread if needed
     return this.createThread(topics, context);
