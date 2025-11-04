@@ -854,6 +854,8 @@ bot.onText(/\/start/, async (msg) => {
 //     );
 //   }
 // });
+
+
 bot.on("message", async (msg) => {
   const chatId = msg.chat.id;
   const text = msg.text?.trim();
@@ -900,35 +902,62 @@ bot.on("message", async (msg) => {
 
     // ========== CONVERSATION WITH ALL INTEGRATIONS ==========
     if (session.stage === "conversation") {
-      // 1. EMOTION DETECTION
-      const emotionalState = await detectEmotionalState(chatId, text);
+      // Initialize variables with defaults
+      let emotionalState = { primary_emotion: 'neutral', intensity: 0.5 };
+      let currentThread = null;
+      let evolutionStage = { stage: 'curious_stranger' };
+      let intent = { intent: 'casual', energy: 'neutral' };
       
-      // 2. THREAD MANAGEMENT
-      if (!threadManagers.has(chatId)) {
-        threadManagers.set(chatId, new ConversationThread(chatId));
+      // 1. EMOTION DETECTION (with fallback)
+      try {
+        emotionalState = await detectEmotionalState(chatId, text);
+      } catch (err) {
+        console.error("Emotion detection failed:", err.message);
       }
-      const threadManager = threadManagers.get(chatId);
-      const currentThread = await threadManager.detectThread(text, {
-        emotion: emotionalState,
-        timestamp: Date.now()
-      });
       
-      // 3. STORE WITH EMOTION
-      await storeConversationTurn(chatId, "user", text, currentThread?.id, emotionalState);
-      await detectAndStoreUserInfo(chatId, text);
+      // 2. THREAD MANAGEMENT (with fallback)
+      try {
+        if (!global.threadManagers) global.threadManagers = new Map();
+        if (!global.threadManagers.has(chatId)) {
+          global.threadManagers.set(chatId, new ConversationThread(chatId));
+        }
+        const threadManager = global.threadManagers.get(chatId);
+        currentThread = await threadManager.detectThread(text, {
+          emotion: emotionalState,
+          timestamp: Date.now()
+        });
+      } catch (err) {
+        console.error("Thread management error:", err.message);
+      }
+      
+      // 3. STORE WITH EMOTION (simplified)
+      try {
+        await storeConversationTurn(chatId, "user", text);
+        await detectAndStoreUserInfo(chatId, text);
+      } catch (err) {
+        console.error("Store conversation error:", err.message);
+      }
       
       session.conversationCount = (session.conversationCount || 0) + 1;
       
-      // 4. VOICE EVOLUTION
-      const voiceEvolution = new VoiceEvolution();
-      const evolutionStage = await voiceEvolution.evolveWithUser(
-        chatId, 
-        session.conversationCount
-      );
-      session.voiceStage = evolutionStage;
+      // 4. VOICE EVOLUTION (with fallback)
+      try {
+        const voiceEvolution = new VoiceEvolution();
+        evolutionStage = await voiceEvolution.evolveWithUser(
+          chatId, 
+          session.conversationCount
+        );
+        session.voiceStage = evolutionStage;
+      } catch (err) {
+        console.error("Voice evolution error:", err.message);
+      }
       
-      // 5. INTENT DETECTION
-      const intent = await detectUserIntent(text);
+      // 5. INTENT DETECTION (with fallback)
+      try {
+        intent = await detectUserIntent(text);
+      } catch (err) {
+        console.error("Intent detection error:", err.message);
+      }
 
       // Handle horoscope requests
       if (intent.needs_horoscope || text.toLowerCase().includes("horoscope")) {
@@ -939,93 +968,180 @@ bot.on("message", async (msg) => {
         return;
       }
 
-      // 6. CHECK LAST INTERACTION (for welcome back)
-      const lastInteraction = await getLastInteractionTime(chatId);
-      if (lastInteraction && (Date.now() - lastInteraction > 24 * 60 * 60 * 1000)) {
-        const returnGreeting = await generatePersonalizedReengagement(
-          { chatId, sign: session.sign, name: session.userName }, 
-          1, 
-          { lastEmotionalState: emotionalState }
-        );
-        await bot.sendMessage(chatId, returnGreeting);
+      // 6. CHECK LAST INTERACTION (simplified)
+      try {
+        const lastInteraction = await getLastInteractionTime(chatId);
+        if (lastInteraction && (Date.now() - lastInteraction > 24 * 60 * 60 * 1000)) {
+          const greeting = `I noticed you were away... welcome back, ${session.sign}. What's been on your mind?`;
+          await bot.sendMessage(chatId, greeting);
+        }
+      } catch (err) {
+        console.error("Welcome back check error:", err.message);
       }
 
       await bot.sendChatAction(chatId, "typing");
 
-      // 7. OPTIMIZED RESPONSE GENERATION
-      let response = await optimizedResponseGeneration(chatId, text, {
-        ...session,
-        emotionalState,
-        currentThread,
-        evolutionStage
-      });
+      // 7. RESPONSE GENERATION (with multiple fallbacks)
+      let response;
+      
+      try {
+        // Try optimized generation if it exists
+        if (typeof optimizedResponseGeneration === 'function') {
+          response = await optimizedResponseGeneration(chatId, text, {
+            ...session,
+            emotionalState,
+            currentThread,
+            evolutionStage
+          });
+        } else {
+          // Fallback to regular generation
+          response = await generateAstroNowResponse(chatId, text, session.sign);
+        }
+      } catch (err) {
+        console.error("Response generation error:", err.message);
+        
+        // Try simple generation
+        try {
+          const simplePrompt = `You are AstroNow, a cosmic companion for a ${session.sign}. 
+          They said: "${text}"
+          Respond with warmth and curiosity in 2-3 sentences.`;
+          
+          const completion = await openai.chat.completions.create({
+            model: "gpt-3.5-turbo",
+            messages: [
+              { role: "system", content: simplePrompt },
+              { role: "user", content: text }
+            ],
+            max_tokens: 100,
+            temperature: 0.8
+          });
+          
+          response = completion.choices[0].message.content;
+        } catch (innerErr) {
+          console.error("Simple generation also failed:", innerErr.message);
+          
+          // Ultimate fallback based on emotion
+          const emotionFallbacks = {
+            joy: "Your energy shines bright today! Tell me more about what's lighting you up.",
+            sadness: "I can feel the weight in your words. I'm here, listening.",
+            anxiety: "Something feels unsettled. What's weighing on your mind?",
+            anger: "There's fire in your message. What needs to be heard?",
+            neutral: "I'm here with you. What would you like to explore today?"
+          };
+          
+          response = emotionFallbacks[emotionalState.primary_emotion] || 
+                    "I sense something in your words. Tell me more?";
+        }
+      }
 
       // Check for duplicates
       if (isResponseDuplicate(chatId, response)) {
-        console.warn("⚠️ Duplicate detected, regenerating...");
-        response = await optimizedResponseGeneration(chatId, text, session);
+        console.warn("⚠️ Duplicate detected, using fallback...");
+        response = "I hear you. What else is on your mind?";
       }
 
       if (response) {
-        // 8. MICRO INTERACTIONS
-        const microInteractions = new MicroInteractions();
-        response = await microInteractions.addSubtleTouch(response, {
-          messageLength: text.length,
-          emotionalIntensity: emotionalState.intensity,
-          timeOfDay: new Date().getHours()
-        });
+        // 8. MICRO INTERACTIONS (optional, with error handling)
+        try {
+          if (typeof MicroInteractions === 'function') {
+            const microInteractions = new MicroInteractions();
+            response = await microInteractions.addSubtleTouch(response, {
+              messageLength: text.length,
+              emotionalIntensity: emotionalState.intensity || 0.5,
+              timeOfDay: new Date().getHours()
+            });
+          }
+        } catch (err) {
+          console.error("Micro interactions error:", err.message);
+        }
         
+        // Send the response
         await bot.sendMessage(chatId, response, { parse_mode: "Markdown" });
-        trackBotResponse(chatId, response);
-        await storeConversationTurn(chatId, "bot", response, currentThread?.id);
         
-        // 9. ANALYTICS TRACKING
-        const analytics = new AstroNowAnalytics();
-        await analytics.trackInteraction({
-          chatId,
-          messageType: intent.intent,
-          emotionalState,
-          responseRelevance: true,
-          threadId: currentThread?.id,
-          voiceStage: evolutionStage.stage
-        });
+        // Track and store (with error handling)
+        try {
+          trackBotResponse(chatId, response);
+          await storeConversationTurn(chatId, "bot", response);
+        } catch (err) {
+          console.error("Tracking error:", err.message);
+        }
         
-        // 10. UPDATE THREAD
-        if (currentThread) {
-          await threadManager.updateThread(
-            currentThread.id, 
-            text, 
-            emotionalState
-          );
+        // 9. ANALYTICS TRACKING (optional)
+        try {
+          if (global.analytics && typeof global.analytics.trackInteraction === 'function') {
+            await global.analytics.trackInteraction({
+              chatId,
+              messageType: intent.intent,
+              emotionalState,
+              responseRelevance: true,
+              threadId: currentThread?.id,
+              voiceStage: evolutionStage.stage
+            });
+          }
+        } catch (err) {
+          console.error("Analytics error:", err.message);
+        }
+        
+        // 10. UPDATE THREAD (optional)
+        try {
+          if (currentThread && global.threadManagers?.get(chatId)) {
+            const threadManager = global.threadManagers.get(chatId);
+            await threadManager.updateThread(
+              currentThread.id, 
+              text, 
+              emotionalState
+            );
+          }
+        } catch (err) {
+          console.error("Thread update error:", err.message);
         }
       }
 
-      // Learn personality every 5 exchanges
+      // Learn personality every 5 exchanges (with error handling)
       if (session.conversationCount % 5 === 0) {
-        await learnPersonality(chatId);
+        try {
+          await learnPersonality(chatId);
+        } catch (err) {
+          console.error("Personality learning error:", err.message);
+        }
       }
 
-      // Special moments
-      if (shouldShareSpecialMoment(session)) {
-        const moment = await getSpecialMoment(session.conversationCount, session.sign);
-        if (moment) {
-          setTimeout(() => {
-            bot.sendMessage(chatId, `💫 ${moment}`, { parse_mode: "Markdown" });
-          }, 3000);
+      // Special moments (with error handling)
+      try {
+        if (shouldShareSpecialMoment(session)) {
+          const moment = await getSpecialMoment(session.conversationCount, session.sign);
+          if (moment) {
+            setTimeout(() => {
+              bot.sendMessage(chatId, `💫 ${moment}`, { parse_mode: "Markdown" })
+                .catch(err => console.error("Special moment error:", err));
+            }, 3000);
+          }
         }
+      } catch (err) {
+        console.error("Special moment error:", err.message);
       }
 
       userSessions.set(chatId, session);
     }
 
   } catch (err) {
-    console.error(`🔥 Error:`, err.message);
-    await bot.sendMessage(
-      chatId, 
-      "The stars went quiet for a moment... What were you saying? ✨"
-    );
+    console.error(`🔥 MAIN ERROR:`, err);
+    console.error(`Stack trace:`, err.stack);
+    
+    // More specific error responses
+    let errorResponse = "The stars went quiet for a moment... What were you saying? ✨";
+    
+    if (err.message?.includes('rate limit')) {
+      errorResponse = "The cosmic channels are busy... Give me a moment and try again? 🌙";
+    } else if (err.message?.includes('quota')) {
+      errorResponse = "I need to rest for a moment... Too many souls seeking guidance today. 💫";
+    }
+    
+    await bot.sendMessage(chatId, errorResponse);
   }
 });
+
+
 // ========== HOROSCOPE COMMAND ==========
 bot.onText(/\/horoscope/, async (msg) => {
   const chatId = msg.chat.id;
@@ -4317,6 +4433,224 @@ cron.schedule("0 4 * * *", async () => {
     created_at: new Date().toISOString()
   });
 });
+
+
+// Add these helper functions for the hook system:
+
+async function hasUnresolvedEmotionalThread(chatId) {
+  try {
+    // Check if there's an active thread with high emotional intensity
+    const { data: threads } = await supabase
+      .from('conversation_threads')
+      .select('emotional_arc, status')
+      .eq('chat_id', chatId.toString())
+      .eq('status', 'active')
+      .order('last_active', { ascending: false })
+      .limit(1);
+    
+    if (!threads || threads.length === 0) return false;
+    
+    const thread = threads[0];
+    const emotionalArc = thread.emotional_arc || [];
+    
+    // Check if the last emotion was intense and unresolved
+    if (emotionalArc.length > 0) {
+      const lastEmotion = emotionalArc[emotionalArc.length - 1];
+      return lastEmotion.intensity > 0.7 && 
+             ['sadness', 'anxiety', 'anger'].includes(lastEmotion.primary_emotion);
+    }
+    
+    return false;
+  } catch (err) {
+    console.error('hasUnresolvedEmotionalThread error:', err.message);
+    return false;
+  }
+}
+
+async function isCosmicEventRelevant(chatId) {
+  try {
+    // Simple implementation - you can enhance with actual cosmic calculations
+    const { data: user } = await supabase
+      .from('users')
+      .select('sign')
+      .eq('chat_id', chatId.toString())
+      .single();
+    
+    if (!user) return false;
+    
+    // For now, just check if it's a new moon or full moon day
+    const moonPhase = await getCurrentMoonPhase();
+    return ['new', 'full'].includes(moonPhase);
+    
+  } catch (err) {
+    console.error('isCosmicEventRelevant error:', err.message);
+    return false;
+  }
+}
+
+async function hasCollectiveResonance(chatId) {
+  try {
+    // Check if user's recent emotion matches collective trend
+    const { data: userEmotion } = await supabase
+      .from('emotional_states')
+      .select('primary_emotion')
+      .eq('chat_id', chatId.toString())
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (!userEmotion || userEmotion.length === 0) return false;
+    
+    // Get today's collective emotion
+    const { data: collective } = await supabase
+      .from('emotional_states')
+      .select('primary_emotion')
+      .gte('created_at', new Date(Date.now() - 24*60*60*1000).toISOString())
+      .neq('chat_id', chatId.toString()); // Exclude this user
+    
+    if (!collective || collective.length < 10) return false;
+    
+    // Count emotions
+    const emotionCounts = collective.reduce((acc, curr) => {
+      acc[curr.primary_emotion] = (acc[curr.primary_emotion] || 0) + 1;
+      return acc;
+    }, {});
+    
+    // Find dominant collective emotion
+    const dominantEmotion = Object.entries(emotionCounts)
+      .sort((a, b) => b[1] - a[1])[0]?.[0];
+    
+    // Check if user's emotion matches collective
+    return userEmotion[0].primary_emotion === dominantEmotion;
+    
+  } catch (err) {
+    console.error('hasCollectiveResonance error:', err.message);
+    return false;
+  }
+}
+
+async function hasNewInsightAboutUser(chatId) {
+  try {
+    // Check if we've generated new insights recently that haven't been shared
+    const { data: insights } = await supabase
+      .from('user_insights')
+      .select('*')
+      .eq('chat_id', chatId.toString())
+      .gte('created_at', new Date(Date.now() - 48*60*60*1000).toISOString())
+      .order('created_at', { ascending: false })
+      .limit(1);
+    
+    if (!insights || insights.length === 0) return false;
+    
+    // Check if this insight was already shared (you'd need to track this)
+    // For now, just return true if there's a recent high-confidence insight
+    return insights[0].confidence > 0.8;
+    
+  } catch (err) {
+    console.error('hasNewInsightAboutUser error:', err.message);
+    return false;
+  }
+}
+
+async function findUnresolvedThread(chatId) {
+  try {
+    const { data: messages } = await supabase
+      .from('conversation_history')
+      .select('message')
+      .eq('chat_id', chatId.toString())
+      .eq('sender', 'user')
+      .order('created_at', { ascending: false })
+      .limit(10);
+    
+    if (!messages || messages.length === 0) return null;
+    
+    // Look for messages with emotional weight that weren't fully addressed
+    for (const msg of messages) {
+      const emotion = await detectEmotionalState(chatId, msg.message);
+      if (emotion.intensity > 0.7) {
+        return {
+          snippet: msg.message.substring(0, 50) + '...',
+          surface: 'the situation',
+          deeper: 'how it made you feel'
+        };
+      }
+    }
+    
+    return null;
+  } catch (err) {
+    console.error('findUnresolvedThread error:', err.message);
+    return null;
+  }
+}
+
+async function getCurrentMoonPhase() {
+  // Simple moon phase calculation (you can use an API for accuracy)
+  const today = new Date();
+  const year = today.getFullYear();
+  const month = today.getMonth() + 1;
+  const day = today.getDate();
+  
+  // Simple approximation
+  const c = Math.floor(365.25 * year);
+  const e = Math.floor(30.6 * month);
+  const jd = c + e + day - 694039.09;
+  const phase = jd / 29.53;
+  const phaseNormalized = phase - Math.floor(phase);
+  
+  if (phaseNormalized < 0.03 || phaseNormalized > 0.97) return 'new';
+  if (phaseNormalized > 0.47 && phaseNormalized < 0.53) return 'full';
+  if (phaseNormalized < 0.25) return 'waxing_crescent';
+  if (phaseNormalized < 0.50) return 'waxing_gibbous';
+  if (phaseNormalized < 0.75) return 'waning_gibbous';
+  return 'waning_crescent';
+}
+
+async function getRulerPlanet(sign) {
+  const rulers = {
+    Aries: 'Mars',
+    Taurus: 'Venus',
+    Gemini: 'Mercury',
+    Cancer: 'Moon',
+    Leo: 'Sun',
+    Virgo: 'Mercury',
+    Libra: 'Venus',
+    Scorpio: 'Pluto',
+    Sagittarius: 'Jupiter',
+    Capricorn: 'Saturn',
+    Aquarius: 'Uranus',
+    Pisces: 'Neptune'
+  };
+  
+  return rulers[sign] || 'the cosmos';
+}
+
+async function getTodaysDeepestLearning() {
+  try {
+    const { data: learnings } = await supabase
+      .from('astronow_learnings')
+      .select('*')
+      .gte('created_at', new Date(Date.now() - 24*60*60*1000).toISOString())
+      .order('confidence', { ascending: false })
+      .limit(1);
+    
+    if (!learnings || learnings.length === 0) {
+      return {
+        insight: "Every silence holds a story",
+        about: "keep their deepest feelings hidden"
+      };
+    }
+    
+    return {
+      insight: learnings[0].insight,
+      about: learnings[0].emotion_understood || 'feel so deeply'
+    };
+  } catch (err) {
+    return {
+      insight: "Connection happens in the spaces between words",
+      about: "need to be truly heard"
+    };
+  }
+}
+
 
 
 async function startServer() {
