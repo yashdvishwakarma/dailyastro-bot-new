@@ -55,3 +55,5 @@ Return a json object with:
     }
   }
 }
+
+export const openAIService = new OpenAIService();

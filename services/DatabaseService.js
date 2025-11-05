@@ -80,3 +80,5 @@ export class DatabaseService {
     return count || 0;
   }
 }
+
+export const databaseService = new DatabaseService();
