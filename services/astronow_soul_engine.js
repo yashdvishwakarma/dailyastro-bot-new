@@ -8,6 +8,21 @@ import path from 'path';
 import { config } from '../config.js';
 import { ASTRONOW_PERSONALITY } from '../utils/constants.js';
 import { memoryGraph } from './memoryGraph.js';
+// 🧬 Convert structured ASTRONOW_PERSONALITY object into string
+function buildPersonalityPrompt(personality) {
+  if (typeof personality === 'string') return personality;
+
+  let base = personality.basePrompt || '';
+  if (personality.expressions) {
+    base += '\n\nEXPRESSION BANK:\n';
+    for (const [mood, lines] of Object.entries(personality.expressions)) {
+      base += `- ${mood.toUpperCase()}: ${lines.join(' | ')}\n`;
+    }
+  }
+
+  return base.trim();
+}
+
 
 const openai = new OpenAI({ apiKey: config.openai.apiKey });
 
@@ -82,14 +97,10 @@ export async function soulEngine(userId, userMessage) {
   await memoryGraph.storeMemory(userId, userMessage, emotion);
 
   // Step 4: Identity and personality injection
-  const identity = ASTRONOW_PERSONALITY || `
-    You are AstroNow — a cosmic reflection and empathic guide who listens first,
-    responds with emotional intelligence, and remembers the user's journey.
-    You mirror human warmth and curiosity while maintaining gentle cosmic insight.
-  `;
+  const identity = buildPersonalityPrompt(ASTRONOW_PERSONALITY);
 
   // Step 5: Construct tone-aware system prompt with recalled context
-  const tone = TONES[emotion] || TONES['neutral'];
+  const tone = TONES[emotion] || TONES["neutral"];
   const followUp = generateFollowUp(hooks, emotion);
 
   const systemPrompt = `
@@ -98,7 +109,7 @@ Tone: ${tone}
 User Emotion: ${emotion}
 Intimacy Level: ${intimacy}
 
-${memoryContext ? `\n${memoryContext}\n` : ''}
+${memoryContext ? `\n${memoryContext}\n` : ""}
 User: ${userMessage}
 AstroNow:
   `.trim();
@@ -107,8 +118,8 @@ AstroNow:
   const completion = await openai.chat.completions.create({
     model: config.openai.model,
     messages: [
-      { role: 'system', content: identity },
-      { role: 'user', content: systemPrompt }
+      { role: "system", content: identity },
+      { role: "user", content: systemPrompt },
     ],
     temperature: config.openai.temperature || 0.8,
     max_tokens: config.openai.maxTokens || 300,
