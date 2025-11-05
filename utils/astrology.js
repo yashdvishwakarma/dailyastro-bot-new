@@ -24,7 +24,7 @@ export function getZodiacSign(month, day) {
   return sign;
 }
 
-export function getSignElement(sign) {
+export function getZodiacElement(sign) {
   const elements = {
     Fire: ["Aries", "Leo", "Sagittarius"],
     Earth: ["Taurus", "Virgo", "Capricorn"],
@@ -38,3 +38,29 @@ export function getSignElement(sign) {
   
   return "spirit";
 }
+
+export function getZodiacTraits(sign) {
+  const traits = {
+    Aries: ["independent", "courageous", "passionate", "impulsive"],
+    Taurus: ["grounded", "sensual", "stubborn", "loyal"],
+    Gemini: ["curious", "adaptable", "restless", "communicative"],
+    Cancer: ["nurturing", "intuitive", "emotional", "protective"],
+    Leo: ["confident", "creative", "dramatic", "generous"],
+    Virgo: ["analytical", "practical", "perfectionist", "helpful"],
+    Libra: ["balanced", "diplomatic", "indecisive", "aesthetic"],
+    Scorpio: ["intense", "mysterious", "transformative", "passionate"],
+    Sagittarius: ["adventurous", "optimistic", "freedom-loving", "philosophical"],
+    Capricorn: ["ambitious", "disciplined", "responsible", "traditional"],
+    Aquarius: ["innovative", "independent", "humanitarian", "eccentric"],
+    Pisces: ["empathetic", "intuitive", "dreamy", "creative"]
+  };
+  
+  return traits[sign] || ["mystical", "unique"];
+}
+
+// Export all functions directly - no 'new' keyword needed
+export default {
+  getZodiacSign,
+  getZodiacElement,
+  getZodiacTraits
+};

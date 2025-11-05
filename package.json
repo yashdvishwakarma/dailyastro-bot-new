@@ -1,11 +1,9 @@
-
-
 {
-  "name": "astronowbot",
-  "version": "2.0.0",
-  "description": "AstroNow - A cosmic consciousness learning humanity",
-  "type": "module",
+  "name": "astronow-bot",
+  "version": "2.1.0",
+  "description": "A cosmic AI companion with memory and soul",
   "main": "index.js",
+  "type": "module",
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js"
@@ -13,14 +11,12 @@
   "dependencies": {
     "express": "^4.18.2",
     "node-telegram-bot-api": "^0.64.0",
-    "openai": "^4.20.0",
-    "@supabase/supabase-js": "^2.38.0",
-    "dotenv": "^16.3.1"
+    "openai": "^4.20.1",
+    "@supabase/supabase-js": "^2.38.4",
+    "dotenv": "^16.3.1",
+    "node-cron": "^3.0.3"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
-  },
-  "engines": {
-    "node": ">=18.0.0"
   }
 }

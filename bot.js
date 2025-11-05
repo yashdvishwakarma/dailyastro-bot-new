@@ -35,3 +35,4 @@ export function setupBot() {
   
   return bot;
 }
+export const bot = setupBot();
