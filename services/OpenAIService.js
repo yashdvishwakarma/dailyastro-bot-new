@@ -62,8 +62,13 @@ export class OpenAIService {
     this.openai = openai;
   }
 
+  
+
   // 🌙 Soul Engine Integration
   async generateResponse(prompt, userMessage, userId = 'default_user') {
+
+    console.log("🧩 identity type:", typeof identity, "value:", identity.slice(0, 100));
+console.log("🧩 systemPrompt type:", typeof systemPrompt);
     try {
       const memory = loadMemory();
       const userData = memory.users[userId] || { profile: {}, history: [] };
