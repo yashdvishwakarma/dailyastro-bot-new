@@ -45,6 +45,46 @@
           "bot": "Oh, I think I see... That's good to hear! What helped you feel calmer?",
           "ts": 1762422503599,
           "emotion": "neutral"
+        },
+        {
+          "user": "hey",
+          "ts": 1762423299073,
+          "emotion": "neutral"
+        },
+        {
+          "bot": "Hey there! What's on your mind today?",
+          "ts": 1762423301159,
+          "emotion": "neutral"
+        },
+        {
+          "user": "I feel lost lately",
+          "ts": 1762423301162,
+          "emotion": "sad"
+        },
+        {
+          "bot": "Hey there. I'm sorry to hear that you've been feeling lost lately. What does that feel like for you? Tell me more about what's been going on.\n\nWhen you think of I feel lost lately, what emotion does it really bring up?",
+          "ts": 1762423303427,
+          "emotion": "sad"
+        },
+        {
+          "user": "I started journaling again",
+          "ts": 1762423303439,
+          "emotion": "neutral"
+        },
+        {
+          "bot": "That's wonderful to hear! What made you decide to start journaling again? Tell me more about your thoughts and feelings around this.\n\nYou mentioned I started journaling again. What about that feels neutral for you?",
+          "ts": 1762423305415,
+          "emotion": "neutral"
+        },
+        {
+          "user": "I'm a bit calmer now",
+          "ts": 1762423305417,
+          "emotion": "neutral"
+        },
+        {
+          "bot": "Oh, I'm glad to hear you're feeling a bit calmer now. What helped you find that sense of calm? Tell me more?\n\nTell me more about I'm a bit calmer now. What made that stand out today?",
+          "ts": 1762423307816,
+          "emotion": "neutral"
         }
       ]
     }

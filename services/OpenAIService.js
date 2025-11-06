@@ -65,70 +65,50 @@ export class OpenAIService {
   
 
   // 🌙 Soul Engine Integration
-  async generateResponse(prompt, userMessage, userId = 'default_user') {
+async generateResponse(prompt, userMessage) {
+  try {
+    // 🧬 Build AstroNow's personality prompt (convert object to string)
+    function buildPersonalityPrompt(personality) {
+      if (typeof personality === 'string') return personality;
 
-    console.log("🧩 identity type:", typeof identity, "value:", identity.slice(0, 100));
-console.log("🧩 systemPrompt type:", typeof systemPrompt);
-    try {
-      const memory = loadMemory();
-      const userData = memory.users[userId] || { profile: {}, history: [] };
+      let base = personality.basePrompt || '';
+      if (personality.expressions) {
+        base += '\n\nEXPRESSION BANK:\n';
+        for (const [mood, lines] of Object.entries(personality.expressions)) {
+          base += `- ${mood.toUpperCase()}: ${lines.join(' | ')}\n`;
+        }
+      }
+      return base.trim();
+    }
 
-      // Analyze emotional context
-      const { emotion, intimacy } = analyzeContext(userMessage);
-      const hooks = extractHooks(userMessage);
+    const identity = buildPersonalityPrompt(ASTRONOW_PERSONALITY);
 
-      userData.profile.lastEmotion = emotion;
-      userData.profile.lastIntimacy = intimacy;
-      userData.history.push({ user: userMessage, ts: Date.now(), emotion });
-
-      // Combine core AstroNow personality with emotional tone
-      const identity = ASTRONOW_PERSONALITY || `
-        You are AstroNow — a cosmic reflection and empathic guide who listens first,
-        responds with emotional intelligence, and remembers the user's journey.
-        You mirror human warmth and curiosity while maintaining gentle cosmic insight.
-      `;
-
-      const tone = TONES[emotion] || TONES['neutral'];
-      const followUp = generateFollowUp(hooks, emotion);
-
-      const systemPrompt = `
+    // 🪶 Build the complete system + user prompt
+    const systemPrompt = `
 ${identity}
-
-Tone: ${tone}
-User Emotion: ${emotion}
-Intimacy Level: ${intimacy}
 
 User: ${userMessage}
 AstroNow:
-      `.trim();
+    `.trim();
 
-      // Call OpenAI (Soul Engine logic)
-      const response = await this.openai.chat.completions.create({
-        model: config.openai.model,
-        messages: [
-          { role: 'system', content: identity },
-          { role: 'user', content: systemPrompt }
-        ],
-        temperature: config.openai.temperature || 0.8,
-        max_tokens: config.openai.maxTokens || 300,
-      });
+    // 🔮 Call OpenAI API
+    const response = await this.openai.chat.completions.create({
+      model: config.openai.model,
+      messages: [
+        { role: 'system', content: systemPrompt }
+      ],
+      temperature: config.openai.temperature,
+      max_tokens: config.openai.maxTokens
+    });
 
-      let reply = response.choices[0]?.message?.content?.trim() || "The stars are listening...";
-
-      // Optionally append follow-up
-      if (followUp && Math.random() > 0.3) reply += `\n\n${followUp}`;
-
-      // Save to memory
-      userData.history.push({ bot: reply, ts: Date.now(), emotion });
-      memory.users[userId] = userData;
-      saveMemory(memory);
-
-      return reply;
-    } catch (error) {
-      console.error('Soul Engine error:', error);
-      return "The cosmic winds are silent right now...";
-    }
+    return response.choices[0]?.message?.content?.trim() || 
+      "The stars are listening...";
+  } catch (error) {
+    console.error('OpenAI error:', error);
+    return "The cosmic winds are silent right now...";
   }
+}
+
 
   // 🌈 Emotion Detection (kept intact)
   async detectEmotion(message) {
