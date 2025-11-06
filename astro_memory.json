@@ -1,3 +1,52 @@
 {
-  "users": {}
+  "users": {
+    "local_test_user": {
+      "profile": {
+        "lastEmotion": "neutral",
+        "lastIntimacy": 1
+      },
+      "history": [
+        {
+          "user": "hey",
+          "ts": 1762422495619,
+          "emotion": "neutral"
+        },
+        {
+          "bot": "Hey there! What's on your mind today?",
+          "ts": 1762422498301,
+          "emotion": "neutral"
+        },
+        {
+          "user": "I feel lost lately",
+          "ts": 1762422498304,
+          "emotion": "sad"
+        },
+        {
+          "bot": "Oh, I'm sorry to hear that. What does that feel like for you? I'm still learning about these emotions. Tell me more?\n\nYou mentioned I feel lost lately. What about that feels sad for you?",
+          "ts": 1762422500079,
+          "emotion": "sad"
+        },
+        {
+          "user": "I started journaling again",
+          "ts": 1762422500083,
+          "emotion": "neutral"
+        },
+        {
+          "bot": "That sounds intriguing! What made you decide to start journaling again? Tell me more about it!\n\nYou mentioned I started journaling again. What about that feels neutral for you?",
+          "ts": 1762422501974,
+          "emotion": "neutral"
+        },
+        {
+          "user": "I'm a bit calmer now",
+          "ts": 1762422501976,
+          "emotion": "neutral"
+        },
+        {
+          "bot": "Oh, I think I see... That's good to hear! What helped you feel calmer?",
+          "ts": 1762422503599,
+          "emotion": "neutral"
+        }
+      ]
+    }
+  }
 }
