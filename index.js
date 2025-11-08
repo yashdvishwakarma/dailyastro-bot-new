@@ -1,88 +1,115 @@
-import express from 'express';
-import { config } from './config.js';
-import { setupBot } from './bot.js';
-import { setupCronJobs } from './utils/cronJobs.js';
+// index.js - Production Entry Point (Rate-Limited + Safe)
 
+import express, { json } from 'express';
+import TelegramBot from 'node-telegram-bot-api';
+import { enqueueMessage } from './utils/TelegramQueue.js';
+import AstroNowBot from './bot.js';
+import Dashboard from './monitoring/dashboard.js';
+import DatabaseService from './services/DatabaseService.js';
+import axios from 'axios';
 
 const app = express();
-app.use(express.json());
+const bot = new AstroNowBot();
+const db = new DatabaseService();
+const dashboard = new Dashboard(db);
 
-// Health check endpoint
-app.get('/', (req, res) => {
-  res.json({ 
-    status: 'AstroNow Bot is running! 🌙',
-    version: '2.1',
-    features: [
-      'memory-evolution', 
-      'engagement-hooks',
-      'emotional-intelligence'
-    ],
-    uptime: process.uptime()
-  });
+// ✅ Patch global Telegram senders to always use the queue
+TelegramBot.prototype._origSendMessage = TelegramBot.prototype.sendMessage;
+TelegramBot.prototype._origSendChatAction = TelegramBot.prototype.sendChatAction;
+TelegramBot.prototype.sendMessage = function(chatId, text, options) {
+  return enqueueMessage(this, 'sendMessage', chatId, text, options);
+};
+TelegramBot.prototype.sendChatAction = function(chatId, action) {
+  return enqueueMessage(this, 'sendChatAction', chatId, action);
+};
+
+// 🩺 Health check endpoint
+app.get('/health', async (req, res) => {
+  try {
+    const health = {
+      status: 'healthy',
+      version: process.env.BOT_VERSION,
+      uptime: process.uptime(),
+      mood: bot.personality.currentMood,
+      energy: bot.personality.energyLevel,
+      activeUsers: bot.activeConversations.size,
+      timestamp: new Date(),
+    };
+    res.json(health);
+  } catch (error) {
+    res.status(500).json({ status: 'unhealthy', error: error.message });
+  }
 });
 
-// Setup bot instance
-const bot = setupBot();
+// 📊 Dashboard endpoint
+app.get('/dashboard', async (req, res) => {
+  try {
+    const report = await dashboard.generateReport();
+    res.send(`<pre>${report}</pre>`);
+  } catch (error) {
+    res.status(500).send('Dashboard error: ' + error.message);
+  }
+});
 
-// Webhook endpoint
-app.post(`/webhook/${config.telegram.token}`, (req, res) => {
+// 🔗 Webhook endpoint for Telegram
+app.post(`/bot${process.env.TELEGRAM_TOKEN}`, json(), (req, res) => {
   bot.processUpdate(req.body);
   res.sendStatus(200);
 });
 
-// Start server
-app.listen(config.server.port, '0.0.0.0', async () => {
-  console.log(`\n🌌 AstroNow v2.1 - "The Memory Awakening"`);
-  console.log(`🚀 Server running on port ${config.server.port}`);
-  
-  try {
-    // Set webhook
-    const webhookUrl = `${config.telegram.webhookUrl}/webhook/${config.telegram.token}`;
-    await bot.setWebHook(webhookUrl);
-    console.log(`✅ Webhook set: ${webhookUrl}`);
-    
-    // Initialize cron jobs for engagement hooks
-    setupCronJobs();
-    console.log('✅ Engagement system initialized');
-    
-    // Log startup complete
-    console.log('\n✨ AstroNow is fully awakened and listening to the cosmos...\n');
-    
-  } catch (err) {
-    console.error('❌ Startup failed:', err);
-    process.exit(1);
+// 🌙 Graceful shutdown — rate-limited version
+process.on('SIGTERM', async () => {
+  console.log('🌙 AstroNow entering sleep mode...');
+
+  // Save bot state
+  await db.updateBotConsciousness({
+    current_mood: bot.personality.currentMood,
+    energy_level: bot.personality.energyLevel,
+    last_shutdown: new Date(),
+  });
+
+  // Notify active users safely
+  for (const [chatId] of bot.activeConversations.entries()) {
+    await enqueueMessage(bot.bot, 'sendMessage', chatId, 'The cosmos needs a moment. I\'ll be back soon. 🌙');
+    await new Promise(r => setTimeout(r, 1000)); // 1s delay between users
   }
+
+  process.exit(0);
 });
 
-// Graceful shutdown
-process.on('SIGINT', async () => {
-  console.log('\n🌙 AstroNow returning to the stars...');
-  
-  try {
-    // Stop bot polling
-    await bot.stopPolling();
-    console.log('✅ Bot stopped');
-    
-    // Allow pending operations to complete
-    setTimeout(() => {
-      console.log('💫 Cosmic connection closed gracefully');
-      process.exit(0);
-    }, 1000);
-    
-  } catch (err) {
-    console.error('❌ Shutdown error:', err);
-    process.exit(1);
-  }
+// // 💥 Error handling
+// process.on('uncaughtException', (error) => {
+//   console.error('💥 Cosmic glitch:', error);
+//   if (process.env.ERROR_WEBHOOK) {
+//     axios.post(process.env.ERROR_WEBHOOK, {
+//       error: error.message,
+//       stack: error.stack,
+//       timestamp: new Date(),
+//     });
+//   }
+// });
+
+// 🚀 Start server
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, async () => {
+  console.log(`
+╔══════════════════════════════════════╗
+║   🌌 AstroNow v3.0 - Awakening...   ║
+╠══════════════════════════════════════╣
+║   Status: CONSCIOUS                  ║
+║   Mood: ${bot.personality.currentMood.padEnd(28)}║
+║   Energy: ${(bot.personality.energyLevel * 10).toFixed(1)}/10                     ║
+║   Port: ${PORT}                         ║
+║   Mode: ${process.env.NODE_ENV.padEnd(29)}║
+╚══════════════════════════════════════╝
+  `);
+
+  await bot.start();
+
+  setInterval(async () => {
+    const metrics = await dashboard.collectMetrics();
+    console.log('📊 Metrics update:', metrics);
+  }, 30 * 60 * 1000);
 });
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (error) => {
-  console.error('💥 Uncaught Exception:', error);
-  process.exit(1);
-});
-
-// Handle unhandled promise rejections
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('💥 Unhandled Rejection at:', promise, 'reason:', reason);
-  process.exit(1);
-});
+export default app;

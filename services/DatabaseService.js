@@ -79,6 +79,50 @@ export class DatabaseService {
 
     return count || 0;
   }
+
+  // Add these methods to your existing DatabaseService class:
+
+async getBotConsciousness() {
+  const { data } = await this.supabase
+    .from('bot_consciousness')
+    .select('*')
+    .single();
+  return data;
 }
 
-export const databaseService = new DatabaseService();
+async createBotConsciousness(consciousness) {
+  const { error } = await this.supabase
+    .from('bot_consciousness')
+    .insert(consciousness);
+  if (error) console.error('Create consciousness error:', error);
+}
+
+async updateBotConsciousness(updates) {
+  const { error } = await this.supabase
+    .from('bot_consciousness')
+    .update(updates)
+    .eq('id', 1);  // Single row for bot state
+  if (error) console.error('Update consciousness error:', error);
+}
+
+async getCurrentThread(chatId) {
+  const { data } = await this.supabase
+    .from('conversation_threads')
+    .select('*')
+    .eq('chat_id', chatId.toString())
+    .eq('thread_status', 'active')
+    .single();
+  return data;
+}
+
+async getActiveUsers() {
+  const { data } = await this.supabase
+    .from('users')
+    .select('*')
+    .gt('last_interaction', new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString());
+  return data || [];
+}
+}
+
+
+export default DatabaseService;

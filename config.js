@@ -8,7 +8,7 @@ export const config = {
   },
   openai: {
     apiKey: process.env.OPENAI_KEY,
-    model: 'gpt-3.5-turbo',
+    model: 'gpt-5',
     maxTokens: 150,
     temperature: 0.85
   },
