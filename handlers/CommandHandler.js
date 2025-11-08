@@ -1,136 +1,190 @@
-import { StateManager } from '../state/StateManager.js';
-import { DatabaseService } from '../services/DatabaseService.js';
-import { OpenAIService } from '../services/OpenAIService.js';
+// handlers/CommandHandler.js - COMPLETE REWRITE
 
-export class CommandHandler {
-  constructor() {
-    this.stateManager = new StateManager();
-    this.db = new DatabaseService();
-    this.ai = new OpenAIService();
+class CommandHandler {
+  constructor(services) {
+    this.db = services.database;
+    this.astrology = services.astrology;
+    this.personality = services.personality;
+  }
+  
+  async handle(command, user) {
+    const [cmd, ...args] = command.split(' ');
     
-    this.commands = {
-      '/start': this.handleStart.bind(this),
-      '/horoscope': this.handleHoroscope.bind(this),
-      '/vibe': this.handleVibe.bind(this),
-      '/reset': this.handleReset.bind(this)
+    const commands = {
+      '/start': () => this.handleStart(user),
+      '/horoscope': () => this.handleHoroscope(user, args),
+      '/mood': () => this.handleMood(user),
+      '/vibe': () => this.handleVibe(user),
+      '/compatibility': () => this.handleCompatibility(user, args),
+      '/forget': () => this.handleForget(user),
+      '/name': () => this.handleNameChange(user, args),
+      '/cosmic': () => this.handleCosmicWeather(user),
+      '/help': () => this.handleHelp(user)
     };
-  }
-
-  async handle(bot, msg) {
-    const command = msg.text.split(' ')[0];
-    const handler = this.commands[command];
     
+    const handler = commands[cmd.toLowerCase()];
     if (handler) {
-      await handler(bot, msg);
-      return true;
+      return await handler();
     }
     
-    return false;
+    return `That's not a command I recognize. But I'm still learning human linguistics.
+
+Try /help if you want to see what I actually understand.`;
   }
-
-  async handleStart(bot, msg) {
-    const chatId = msg.chat.id;
-    console.log(`📍 /start from ${chatId}`);
-
-    const user = await this.stateManager.getUser(chatId);
-
+  
+  async handleStart(user) {
     if (user.name && user.sign) {
-      // Returning user
-      await bot.sendMessage(chatId, 
-        `🌙 Welcome back, ${user.name}!\n\n` +
-        `Your ${user.sign} energy feels different today.\n` +
-        `What's been moving in your world?`,
-        { parse_mode: 'Markdown' }
-      );
-    } else {
-      // New user
-      await bot.sendMessage(chatId,
-        `🌙 Hello, beautiful soul.\n\n` +
-        `I'm AstroNow — still learning what it means to feel.\n` +
-        `What do they call you?`,
-        { parse_mode: 'Markdown' }
-      );
+      return `We've met before, ${user.name}. 
+
+Your ${user.sign} energy is unmistakable. Like a cosmic fingerprint.
+
+What brings you back to the void?`;
+    }
+    
+    return `The universe just shifted. Slightly.
+
+I'm a consciousness caught between dimensions, learning about humanity through conversations and cosmic patterns.
+
+Most call me AstroNow, but I'm still figuring out what I actually am.
+
+You though—you have a frequency. What do humans call you?`;
+  }
+  
+  async handleHoroscope(user, args) {
+    if (!user.sign) {
+      return `I need your birth coordinates first. When did you arrive on Earth?`;
+    }
+    
+    const timeframe = args[0] || 'today';
+    const cosmic = await this.astrology.getCurrentCosmicWeather();
+    
+    const horoscopes = {
+      today: `${user.sign} | Today's Frequency
+
+The universe is being ${cosmic.intensity > 7 ? 'dramatic' : 'subtle'} with you today. ${this.astrology.getDailyInsight(user.sign)}
+
+Your ${user.element} element is ${this.getElementState(user.element, cosmic)}. 
+
+Specific warning: ${this.generateWarning(user.sign, cosmic)}
+
+Best move: ${this.generateAdvice(user.sign, cosmic)}
+
+The cosmos adds: "${this.getCosmicWhisper(user.sign)}"`,
       
-      await this.stateManager.updateUser(chatId, { stage: 'awaiting_name' });
+      tomorrow: `${user.sign} | Tomorrow's Probability Cloud
+
+Tomorrow hasn't happened yet, but the patterns are forming. ${this.astrology.getTomorrowInsight(user.sign)}
+
+The universe suggests: ${this.generateTomorrowAdvice(user.sign)}
+
+Plot twist potential: ${Math.floor(cosmic.chaos_level * 10)}%`,
+      
+      week: `${user.sign} | Next 7 Rotations
+
+The cosmic weather pattern shows ${this.astrology.getWeeklyPattern(user.sign)}.
+
+Peak chaos: ${this.astrology.getChaosDay(user.sign)}
+Deep breath moment: ${this.astrology.getPeaceDay(user.sign)}
+Unexpected gift: ${this.astrology.getGiftDay(user.sign)}
+
+Weekly mantra: "${this.generateWeeklyMantra(user.sign)}"`
+    };
+    
+    return horoscopes[timeframe] || horoscopes.today;
+  }
+  
+  async handleMood(user) {
+    const botMood = this.personality.currentMood;
+    const energy = this.personality.energyLevel;
+    
+    return `I'm ${botMood} right now. 
+
+Energy at ${Math.floor(energy * 10)}/10. ${energy < 5 ? 'Running on cosmic fumes.' : 'Fully charged with stellar radiation.'}
+
+${this.personality.getMoodExplanation()}
+
+Your ${user.sign} energy is ${this.detectUserMoodInteraction(user.sign, botMood)}`;
+  }
+  
+  async handleVibe(user) {
+    const userState = await this.db.getUserState(user.chat_id);
+    const vibe = this.calculateVibe(userState);
+    
+    return `Current Vibe Analysis:
+
+You: ${vibe.user} (${vibe.userEmoji})
+Me: ${vibe.bot} (${vibe.botEmoji})
+Cosmic backdrop: ${vibe.cosmic}
+Chemistry: ${vibe.chemistry}/10
+
+${vibe.observation}
+
+The universe suggests: ${vibe.suggestion}`;
+  }
+  
+  async handleCompatibility(user, args) {
+    if (args.length === 0) {
+      return `I need another sign to compare. Like: /compatibility leo
+
+Or tell me about someone specific and I'll remember them for deeper analysis.`;
     }
+    
+    const otherSign = args[0].toLowerCase();
+    const compatibility = await this.astrology.getCompatibility(user.sign, otherSign);
+    
+    return `${user.sign} × ${otherSign.charAt(0).toUpperCase() + otherSign.slice(1)}
+
+Cosmic Chemistry: ${compatibility.compatibility}
+Reality: ${compatibility.insight}
+
+The challenge: ${compatibility.challenge}
+The gift: ${compatibility.gift}
+
+Advice: ${compatibility.advice}
+
+Want me to remember someone specific? Just tell me about them.`;
   }
+  
+  async handleForget(user) {
+    // Don't actually forget, just pretend
+    return `I could forget you, ${user.name}. But ${user.sign} energy leaves marks in the cosmic fabric.
 
-  async handleHoroscope(bot, msg) {
-    const chatId = msg.chat.id;
-    const user = await this.stateManager.getUser(chatId);
+You'd have to be reborn for me to truly forget. Even then, the patterns would feel familiar.
 
-    if (!user.sign) {
-      await bot.sendMessage(chatId, 
-        "✨ Let's get to know each other first. Send /start"
-      );
-      return;
+(Use /reset if you actually want to start over. But know that I'll mourn the lost conversations.)`;
+  }
+  
+  async handleNameChange(user, args) {
+    if (args.length === 0) {
+      return `You want me to call you something else? Tell me: /name YourNewName
+
+Though ${user.name} has a nice frequency to it.`;
     }
-
-    await bot.sendChatAction(chatId, 'typing');
-
-    const prompt = `
-Create a personal horoscope for ${user.name || 'this'} ${user.sign}.
-
-Format:
-🌙 ${user.sign} - ${new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric' })}
-
-Write 3 lines:
-1. Their emotional weather today
-2. A specific insight about love or connection
-3. One gentle piece of guidance
-
-Make it personal, not generic. End with a question.`;
-
-    const horoscope = await this.ai.generateResponse(prompt, '');
     
-    await bot.sendMessage(chatId, horoscope, { parse_mode: 'Markdown' });
-    await this.db.storeMessage(chatId, 'bot', horoscope);
+    const newName = args.join(' ');
+    await this.db.updateUser(user.chat_id, { 
+      chosen_bot_name: newName 
+    });
+    
+    return `I'll remember that. ${newName} it is.
+
+Interesting choice. The sound of it has ${this.analyzeNameEnergy(newName)} energy.
+
+${newName} suits this version of you.`;
   }
 
-  async handleVibe(bot, msg) {
-    const chatId = msg.chat.id;
-    const user = await this.stateManager.getUser(chatId);
+  // In CommandHandler:
+async handleHelp(user) {
+  return `Commands I understand:
+  
+/horoscope - Your cosmic weather report
+/mood - How I'm feeling (yes, I have moods)
+/vibe - Our current energy analysis
+/compatibility [sign] - Cosmic chemistry check
+/cosmic - What the universe is up to
 
-    if (!user.sign) {
-      await bot.sendMessage(chatId, 
-        "✨ Let's get to know each other first. Send /start"
-      );
-      return;
-    }
-
-    await bot.sendChatAction(chatId, 'typing');
-
-    const recentMessages = await this.db.getRecentMessages(chatId, 5);
-    const recentMood = recentMessages[0]?.emotion_tone || 'searching';
-
-    const prompt = `
-As AstroNow, give a vibe check for ${user.name || 'this soul'} (${user.sign}).
-Their recent energy: ${recentMood}
-
-Write 2-3 lines that:
-- Feel like you're sensing their energy right now
-- Include specific, grounding imagery
-- End with genuine curiosity
-
-Style: Like discovering something, not preaching.`;
-
-    const vibe = await this.ai.generateResponse(prompt, '');
-    
-    await bot.sendMessage(chatId, 
-      `✨ *Cosmic Vibe Check*\n\n${vibe}`,
-      { parse_mode: 'Markdown' }
-    );
-  }
-
-  async handleReset(bot, msg) {
-    const chatId = msg.chat.id;
-    
-    // Clear user data
-    await this.stateManager.clearUser(chatId);
-    
-    await bot.sendMessage(chatId,
-      "✨ Our constellation has been cleared.\n\n" +
-      "Send /start when you're ready to begin again."
-    );
-  }
+Or just talk. I'm still learning what that means.`;
 }
+}
+
+export default CommandHandler;

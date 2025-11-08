@@ -1,250 +1,191 @@
 import { hookGenerationService } from './HookGenerationService.js';
 import { databaseService } from './DatabaseService.js';
+import { enqueueMessage } from '../utils/TelegramQueue.js';
 import { bot } from '../bot.js';
 
 class EngagementService {
-    constructor() {
-        this.hookSchedule = {
-            1: 6,    // First hook after 6 hours
-            2: 12,   // Second hook after 12 hours
-            3: 24    // Then daily
-        };
-    }
+  constructor() {
+    this.hookSchedule = { 1: 6, 2: 12, 3: 24 };
+  }
 
-    async checkInactiveUsers() {
+  async checkInactiveUsers() {
+    try {
+      console.log('🔍 Checking for inactive users...');
+      const users = await this.getUsersNeedingHooks();
+      console.log(`Found ${users.length} users needing hooks`);
+
+      for (const user of users) {
         try {
-            console.log('🔍 Checking for inactive users...');
-            
-            // Get all users who need hooks
-            const usersNeedingHooks = await this.getUsersNeedingHooks();
-            
-            console.log(`Found ${usersNeedingHooks.length} users needing hooks`);
-            
-            for (const user of usersNeedingHooks) {
-                try {
-                    await this.sendHookToUser(user);
-                    // Add delay to avoid rate limits
-                    await this.delay(1000);
-                } catch (error) {
-                    console.error(`Error sending hook to ${user.chat_id}:`, error);
-                }
-            }
+          await this.sendHookToUser(user);
+          await this.delay(2000); // Small gap to prevent bursts
         } catch (error) {
-            console.error('Error in checkInactiveUsers:', error);
+          console.error(`Error sending hook to ${user.chat_id}:`, error);
         }
+      }
+    } catch (error) {
+      console.error('Error in checkInactiveUsers:', error);
     }
+  }
 
-    async getUsersNeedingHooks() {
-        const now = new Date();
-        const users = [];
+  async getUsersNeedingHooks() {
+    const now = new Date();
+    const users = [];
 
-        try {
-            // Get all users' engagement states
-            const { data: engagementStates, error } = await databaseService.supabase
-                .from('user_engagement_state')
-                .select('*')
-                .eq('is_active', true)
-                .order('last_message_at', { ascending: true });
+    try {
+      const { data: states, error } = await databaseService.supabase
+        .from('user_engagement_state')
+        .select('*')
+        .eq('is_active', true)
+        .order('last_message_at', { ascending: true });
 
-            if (error) throw error;
+      if (error) throw error;
 
-            for (const state of engagementStates) {
-                const hoursSinceLastMessage = (now - new Date(state.last_message_at)) / (1000 * 60 * 60);
-                const hoursSinceLastHook = state.last_hook_sent_at 
-                    ? (now - new Date(state.last_hook_sent_at)) / (1000 * 60 * 60)
-                    : Infinity;
+      for (const s of states) {
+        const hrsSilent = (now - new Date(s.last_message_at)) / 36e5;
+        const hrsSinceHook = s.last_hook_sent_at ? (now - new Date(s.last_hook_sent_at)) / 36e5 : Infinity;
+        const hookNumber = (s.hook_count || 0) + 1;
+        const required = this.getRequiredHoursForHook(hookNumber);
 
-                // Determine which hook should be sent
-                const hookNumber = (state.hook_count || 0) + 1;
-                const requiredHours = this.getRequiredHoursForHook(hookNumber);
-
-                // Check if it's time for a hook
-                if (hoursSinceLastMessage >= requiredHours && 
-                    (hookNumber === 1 || hoursSinceLastHook >= this.getHookInterval(hookNumber))) {
-                    
-                    // Get full user data
-                    const userData = await this.getUserData(state.chat_id);
-                    if (userData) {
-                        users.push({
-                            ...userData,
-                            hookNumber,
-                            hoursSilent: Math.floor(hoursSinceLastMessage)
-                        });
-                    }
-                }
-            }
-
-            return users;
-        } catch (error) {
-            console.error('Error getting users needing hooks:', error);
-            return [];
+        if (hrsSilent >= required && (hookNumber === 1 || hrsSinceHook >= this.getHookInterval(hookNumber))) {
+          const userData = await this.getUserData(s.chat_id);
+          if (userData) users.push({ ...userData, hookNumber, hoursSilent: Math.floor(hrsSilent) });
         }
+      }
+
+      return users;
+    } catch (error) {
+      console.error('Error getting users needing hooks:', error);
+      return [];
     }
+  }
 
-    getRequiredHoursForHook(hookNumber) {
-        // First hook at 6 hours, subsequent ones follow schedule
-        if (hookNumber === 1) return 6;
-        if (hookNumber === 2) return 6; // Still check from 6 hours of initial silence
-        return 6; // Daily hooks also start checking from 6 hours
+  getRequiredHoursForHook(n) {
+    return 6;
+  }
+
+  getHookInterval(n) {
+    return n === 2 ? 12 : 24;
+  }
+
+  async sendHookToUser(user) {
+    try {
+      console.log(`🌙 Generating hook for ${user.name || user.chat_id} (${user.sign})`);
+      const hook = await hookGenerationService.generateUniqueHook(user, user.hookNumber);
+      await this.storeHook(user.chat_id, hook, user.hookNumber);
+
+      // ✅ SAFE QUEUE SEND
+      await enqueueMessage(bot.bot, 'sendMessage', user.chat_id, hook.message);
+
+      await this.updateEngagementState(user.chat_id, user.hookNumber);
+      console.log(`✅ Hook sent to ${user.name || user.chat_id}: "${hook.message}"`);
+    } catch (error) {
+      console.error(`Failed to send hook to ${user.chat_id}:`, error);
+      throw error;
     }
+  }
 
-    getHookInterval(hookNumber) {
-        // Time between hooks
-        if (hookNumber === 2) return 12;  // 12 hours after first hook
-        return 24; // Daily thereafter
+  async getUserData(chatId) {
+    try {
+      const { data, error } = await databaseService.supabase
+        .from('users')
+        .select('*')
+        .eq('chat_id', chatId)
+        .single();
+      if (error) throw error;
+      return data;
+    } catch (error) {
+      console.error(`Error getting user data for ${chatId}:`, error);
+      return null;
     }
+  }
 
-    async sendHookToUser(user) {
-        try {
-            console.log(`🌙 Generating hook for ${user.name || user.chat_id} (${user.sign})`);
-            
-            // Generate unique hook
-            const hookData = await hookGenerationService.generateUniqueHook(user, user.hookNumber);
-            
-            // Store hook in database
-            await this.storeHook(user.chat_id, hookData, user.hookNumber);
-            
-            // Send via Telegram
-            await bot.sendMessage(user.chat_id, hookData.message);
-            
-            // Update user engagement state
-            await this.updateEngagementState(user.chat_id, user.hookNumber);
-            
-            console.log(`✅ Hook sent to ${user.name || user.chat_id}: "${hookData.message}"`);
-        } catch (error) {
-            console.error(`Failed to send hook to ${user.chat_id}:`, error);
-            throw error;
-        }
+  async storeHook(chatId, hook, n) {
+    try {
+      const { error } = await databaseService.supabase
+        .from('engagement_hooks')
+        .insert({
+          chat_id: chatId,
+          hook_message: hook.message,
+          hook_fingerprint: hook.fingerprint,
+          hook_number: n,
+          context_used: hook.context,
+        });
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error storing hook:', error);
     }
+  }
 
-    async getUserData(chatId) {
-        try {
-            const { data, error } = await databaseService.supabase
-                .from('users')
-                .select('*')
-                .eq('chat_id', chatId)
-                .single();
-
-            if (error) throw error;
-            return data;
-        } catch (error) {
-            console.error(`Error getting user data for ${chatId}:`, error);
-            return null;
-        }
+  async updateEngagementState(chatId, n) {
+    try {
+      const { error } = await databaseService.supabase
+        .from('user_engagement_state')
+        .update({
+          last_hook_sent_at: new Date(),
+          hook_count: n,
+        })
+        .eq('chat_id', chatId);
+      if (error) throw error;
+    } catch (error) {
+      console.error('Error updating engagement state:', error);
     }
+  }
 
-    async storeHook(chatId, hookData, hookNumber) {
-        try {
-            const { error } = await databaseService.supabase
-                .from('engagement_hooks')
-                .insert({
-                    chat_id: chatId,
-                    hook_message: hookData.message,
-                    hook_fingerprint: hookData.fingerprint,
-                    hook_number: hookNumber,
-                    context_used: hookData.context
-                });
+  async updateLastMessageTime(chatId) {
+    try {
+      const { data: existing } = await databaseService.supabase
+        .from('user_engagement_state')
+        .select('chat_id')
+        .eq('chat_id', chatId)
+        .single();
 
-            if (error) throw error;
-        } catch (error) {
-            console.error('Error storing hook:', error);
-        }
+      if (!existing) {
+        await databaseService.supabase
+          .from('user_engagement_state')
+          .insert({ chat_id: chatId, last_message_at: new Date(), is_active: true });
+      } else {
+        await databaseService.supabase
+          .from('user_engagement_state')
+          .update({
+            last_message_at: new Date(),
+            hook_count: 0,
+            is_active: true,
+          })
+          .eq('chat_id', chatId);
+      }
+    } catch (error) {
+      console.error('Error updating last message time:', error);
     }
+  }
 
-    async updateEngagementState(chatId, hookNumber) {
-        try {
-            const { error } = await databaseService.supabase
-                .from('user_engagement_state')
-                .update({
-                    last_hook_sent_at: new Date(),
-                    hook_count: hookNumber,
-                    total_hooks_sent: databaseService.supabase.raw('total_hooks_sent + 1')
-                })
-                .eq('chat_id', chatId);
+  async checkIfHookResponse(chatId) {
+    try {
+      const { data, error } = await databaseService.supabase
+        .from('engagement_hooks')
+        .select('*')
+        .eq('chat_id', chatId)
+        .eq('response_received', false)
+        .order('sent_at', { ascending: false })
+        .limit(1)
+        .single();
 
-            if (error) throw error;
-        } catch (error) {
-            console.error('Error updating engagement state:', error);
-        }
+      if (!error && data) {
+        await databaseService.supabase
+          .from('engagement_hooks')
+          .update({ response_received: true, response_received_at: new Date() })
+          .eq('id', data.id);
+        return data;
+      }
+      return null;
+    } catch (error) {
+      console.error('Error checking hook response:', error);
+      return null;
     }
+  }
 
-    async updateLastMessageTime(chatId) {
-        try {
-            // First, ensure engagement state exists
-            const { data: existing } = await databaseService.supabase
-                .from('user_engagement_state')
-                .select('chat_id')
-                .eq('chat_id', chatId)
-                .single();
-
-            if (!existing) {
-                // Create new engagement state
-                await databaseService.supabase
-                    .from('user_engagement_state')
-                    .insert({
-                        chat_id: chatId,
-                        last_message_at: new Date(),
-                        is_active: true
-                    });
-            } else {
-                // Update existing
-                await databaseService.supabase
-                    .from('user_engagement_state')
-                    .update({
-                        last_message_at: new Date(),
-                        hook_count: 0, // Reset hook count when user messages
-                        is_active: true
-                    })
-                    .eq('chat_id', chatId);
-            }
-        } catch (error) {
-            console.error('Error updating last message time:', error);
-        }
-    }
-
-    async checkIfHookResponse(chatId) {
-        try {
-            // Get the most recent unanswered hook
-            const { data, error } = await databaseService.supabase
-                .from('engagement_hooks')
-                .select('*')
-                .eq('chat_id', chatId)
-                .eq('response_received', false)
-                .order('sent_at', { ascending: false })
-                .limit(1)
-                .single();
-
-            if (!error && data) {
-                // Mark hook as responded
-                await databaseService.supabase
-                    .from('engagement_hooks')
-                    .update({
-                        response_received: true,
-                        response_received_at: new Date()
-                    })
-                    .eq('id', data.id);
-
-                // Update engagement metrics
-                await databaseService.supabase
-                    .from('user_engagement_state')
-                    .update({
-                        total_hooks_responded: databaseService.supabase.raw('total_hooks_responded + 1')
-                    })
-                    .eq('chat_id', chatId);
-
-                return data;
-            }
-
-            return null;
-        } catch (error) {
-            console.error('Error checking hook response:', error);
-            return null;
-        }
-    }
-
-    delay(ms) {
-        return new Promise(resolve => setTimeout(resolve, ms));
-    }
+  delay(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
+  }
 }
 
 export const engagementService = new EngagementService();
