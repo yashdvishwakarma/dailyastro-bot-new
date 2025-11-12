@@ -1,4 +1,5 @@
 // handlers/ConversationHandler.js
+import getDatabase from '../services/DatabaseService.js';
 import PersonalityEngine from '../consciousness/PersonalityEngine.js';
 import ConversationDynamics from '../consciousness/ConversationDynamics.js';
 import IntentAnalyzer from '../intelligence/IntentAnalyzer.js';
@@ -7,150 +8,163 @@ import MemoryWeaver from '../consciousness/MemoryWeaver.js';
 import SubtextReader from '../intelligence/SubtextReader.js';
 import OpenAIService from '../services/OpenAIService.js';
 import MetricsService from '../services/MetricsService.js';
+import getMemoryManager from '../services/ConversationMemoryManager.js';
 
 class ConversationHandler {
-  constructor(services) {
-    this.db = services.database;
-    this.bot = services.bot; // Need this for sending messages
-    
-    // Initialize consciousness modules
+  constructor(services = {}) {
+    // Database initialization (supports getDatabase or injected service)
+    this.dbPromise = services.database || getDatabase();
+    this.bot = services.bot || null;
+
+    // Consciousness modules
     this.personality = new PersonalityEngine();
     this.dynamics = new ConversationDynamics();
     this.intent = new IntentAnalyzer();
-    this.memory = new MemoryWeaver(this.db);
+    this.memory = new MemoryWeaver(this.dbPromise);
     this.subtext = new SubtextReader();
-    this.metrics = new MetricsService(this.db);
-    // Initialize AI service (ONCE)
+    this.metrics = new MetricsService(this.dbPromise);
     this.ai = new OpenAIService();
     this.value = new ValueGenerator(services.astrology, this.memory, this.ai);
+      this.memoryManager = getMemoryManager();
+
+    this.db = null;
   }
-  
-  // SINGLE MAIN HANDLER METHOD
+
+  async getDb() {
+    if (!this.db) this.db = await this.dbPromise;
+    return this.db;
+  }
+
+  // ───────────────────────────────────────────────
+  // 🧠 MAIN MESSAGE HANDLER
+  // ───────────────────────────────────────────────
   async handleMessage(message, user, chatId) {
     try {
 
+      const db = await this.getDb();
       const messageCount = user.total_messages || 0;
 
-          if (messageCount === 5) {
-        await this.metrics.trackGhosting(user.id, messageCount);
-      }
+      // Metric checks
+      if (messageCount === 5) await this.metrics.trackGhosting(user.id, messageCount);
+      if (messageCount === 1) await this.metrics.trackResponseToGreeting(user.id, message);
 
-            // Check if this is a response to our greeting
-      if (messageCount === 1) { // Second message (after hi)
-        await this.metrics.trackResponseToGreeting(user.id, message);
-      }
-      
-// Check for standard greeting first
-          const greetingResponse = await this.handleGreeting(message, user);
-    if (greetingResponse) {
-      await this.storeAndLearn(message, greetingResponse.text, null, user);
-      return greetingResponse.text;
-    }
+      // Handle greetings early
+      // const greetingResponse = await this.handleGreeting(message, user);
+      // if (greetingResponse) {
+      //   // console.log(`[Greeting] ${message} also the user data`,user);
+      //   await this.storeAndLearn(message, greetingResponse.text, null, user);
+      //   return greetingResponse.text;
+      // }
 
-      // 1. Analyze the message context
+      // 1️⃣ Analyze message
       const analysis = await this.analyzeMessage(message, user);
-      
-      // 2. Determine bot mood
+
+      // 2️⃣ Determine mood
       const botMood = await this.personality.determineMood(analysis.context);
+
+      // 3️⃣ Build OpenAI context with ENHANCED MEMORY
+const enhancedMemory = await this.memoryManager.getEnhancedContext(chatId, message);
+
+// const aiContext = {
+//   message,
+//   currentMessage: message,
+//   userSign: user.sign,
+//   userName: user.name,
+//   element: user.element,
+//   botMood,
+//   messageCount,
+//   energyLevel: this.personality.energyLevel,
+//   recentMessages: enhancedMemory.recentMessages || await db.getRecentMessages(chatId, 5),
+//   summaries: enhancedMemory.summaries,  // NEW: Historical summaries
+//   semanticMatches: enhancedMemory.semanticMatches,  // NEW: Relevant past context
+//   threadDepth: analysis.context.threadDepth || 0,
+//   detectedNeed: analysis.intent.need,
+//   threadEmotion: analysis.subtext.emotion
+// };
+      // console.log(`[AI] Mood=${botMood} | Sign=${user.sign}`);
+
+      // 4️⃣ Generate response
       
-      // 3. Build comprehensive context for AI
       const aiContext = {
-        message,
-        currentMessage: message,
-        userSign: user.sign,
-        userName: user.name,
-        element: user.element,
-        botMood,
-        messageCount: user.total_messages || 0,
-        energyLevel: this.personality.energyLevel,
-        recentMessages: await this.db.getRecentMessages(user.chat_id, 5),
-        threadDepth: analysis.context.threadDepth || 0,
-        detectedNeed: analysis.intent.need,
-        threadEmotion: analysis.subtext.emotion
-      };
-      
-      console.log(`Received message from botMood=${botMood}`);
-      
-      // 4. Get AI response with emotional intelligence
+  message: message,
+  currentMessage: message,
+  userSign: user.sign,
+  userName: user.name,
+  botMood,
+  messageCount,
+  energyLevel: this.personality.energyLevel,
+  // Already optimized from memory manager
+  recentMessages: enhancedMemory.recentMessages,
+  summaries: enhancedMemory.summaries,
+  // Don't send these unless absolutely needed:
+  // - semanticMatches (already incorporated in summaries)
+  // - IDs, timestamps, metadata (not needed for generation)
+  // - threadDepth, detectedNeed (let AI figure it out)
+};
       const aiResponse = await this.ai.generateResponse(aiContext);
-      
-      // 5. Process the response
+      console.log(`[AI Response]`, aiResponse);
+      // 5️⃣ Process AI response
       let finalResponse;
       let severity = 0;
 
-
-            if (aiResponse.metadata?.severity >= 5) {
-        await this.metrics.trackVulnerability(
-          user.id,
-          messageCount,
-          message,
-          aiResponse.metadata.severity,
-          aiResponse.metadata.emotion
-        );
-      }
-      
       if (typeof aiResponse === 'object' && aiResponse.metadata) {
-        // Structured response with metadata
         finalResponse = aiResponse.text;
         severity = aiResponse.metadata.severity;
-        
-        // Handle mood override for high severity
+
         if (aiResponse.metadata.moodOverride) {
           this.personality.shiftMood(aiResponse.metadata.moodOverride);
-          console.log(`🔄 Mood override: ${botMood} → ${aiResponse.metadata.moodOverride}`);
+          // console.log(`🔄 Mood override: ${botMood} → ${aiResponse.metadata.moodOverride}`);
         }
-        
-        // Store emotional state
+
         await this.storeEmotionalState(user.id, {
           severity: aiResponse.metadata.severity,
           emotion: aiResponse.metadata.emotion,
           need: aiResponse.metadata.need,
           timestamp: new Date()
         });
-        
-        // Handle crisis situations
+
         if (aiResponse.metadata.flags?.crisis) {
           await this.handleCrisisAlert(user, message, aiResponse.metadata);
         }
-        
       } else {
-        // Simple text response (fallback)
         finalResponse = aiResponse;
       }
-      
-      // 6. Apply personality quirks ONLY if not high severity
-      if (severity < 7) {
-        finalResponse = await this.humanize(finalResponse, botMood);
-      }
-      
-      // 7. Store conversation data
+
+      // 6️⃣ Humanization
+      // if (severity < 7) {
+      //   finalResponse = await this.humanize(finalResponse, botMood);
+      // }
+
+      // 7️⃣ Learn + store
+              // console.log(`[Greeting yeahh] ${message} also the user data`,user);
       await this.storeAndLearn(message, finalResponse, analysis, user);
-      
-      // 8. Return response (bot.js will send it)
+
       return finalResponse;
-      
     } catch (error) {
       console.error('Conversation handling error:', error);
-      
-      // Emergency fallback for crisis
-      const severity = this.ai.fallbackSeverityCheck(message);
+
+      const severity = this.ai.fallbackSeverityCheck?.(message) || 0;
       if (severity >= 9) {
         const emergency = this.ai.generateEmergencyResponse(message);
         return emergency.text;
       }
-      
+
       return this.generateFallback(user);
     }
   }
-  
+
+  // ───────────────────────────────────────────────
+  // 🔍 ANALYSIS
+  // ───────────────────────────────────────────────
   async analyzeMessage(message, user) {
-    const thread = await this.db.getCurrentThread(user.chat_id);
-    const recentMessages = await this.db.getRecentMessages(user.chat_id, 5);
+    const db = await this.getDb();
+    const thread = await db.getCurrentThread(user.chat_id);
+    const recentMessages = await db.getRecentMessages(user.chat_id, 20);
     const memories = await this.memory.getRelevantMemories(message, user);
 
     const intent = this.intent.analyzeIntent(message, {
       recentEmotions: thread?.emotional_arc || [],
-      sign: user.sign,
+      sign: user.sign
     });
 
     const subtext = this.subtext.read(message, recentMessages);
@@ -170,37 +184,35 @@ class ConversationHandler {
         userEnergy: flow.energy,
         threadDepth: thread?.depth_score || 0,
         currentMessage: message,
-        recentMessages: recentMessages || [],
-      },
+        recentMessages
+      }
     };
   }
-  
+
+  // ───────────────────────────────────────────────
+  // ❤️ EMOTIONAL STATE STORAGE
+  // ───────────────────────────────────────────────
   async storeEmotionalState(userId, state) {
     try {
-      // Create table if doesn't exist
-      await this.db.query(`
-        CREATE TABLE IF NOT EXISTS user_emotional_states (
-          id SERIAL PRIMARY KEY,
-          user_id INTEGER,
-          severity INTEGER,
-          emotion VARCHAR(50),
-          need VARCHAR(100),
-          timestamp TIMESTAMPTZ,
-          created_at TIMESTAMPTZ DEFAULT NOW()
-        )
-      `);
-      
-      await this.db.query(`
-        INSERT INTO user_emotional_states 
-        (user_id, severity, emotion, need, timestamp)
-        VALUES ($1, $2, $3, $4, $5)
-      `, [userId, state.severity, state.emotion, state.need, state.timestamp]);
-      
+      const db = await this.getDb();
+      await db.query('user_emotional_states', 'insert', {
+        values: {
+          user_id: userId,
+          severity: state.severity,
+          emotion: state.emotion,
+          need: state.need,
+          timestamp: state.timestamp,
+          created_at: new Date().toISOString()
+        }
+      });
     } catch (error) {
-      console.error('Failed to store emotional state:', error);
+      console.error('Failed to store emotional state:', error.message);
     }
   }
-  
+
+  // ───────────────────────────────────────────────
+  // ⚠️ CRISIS HANDLER
+  // ───────────────────────────────────────────────
   async handleCrisisAlert(user, message, metadata) {
     console.log(`
       🚨 CRISIS ALERT 🚨
@@ -210,90 +222,18 @@ class ConversationHandler {
       Emotion: ${metadata.emotion}
       Need: ${metadata.need}
     `);
-    
-    // Future: Could send alerts to monitoring service
-  }
-  
-  async humanize(response, mood) {
-    let humanized = this.personality.generateQuirks(mood)(response);
-    humanized = this.removeRoboticPatterns(humanized);
-    
-    // Add variations occasionally
-    if (Math.random() < 0.2) {
-      humanized = this.addThinkingPauses(humanized);
-    }
-    
-    return humanized;
-  }
-  
-  removeRoboticPatterns(text) {
-    const roboticPhrases = {
-      "I understand": ["Yeah", "I see", "Got it"],
-      "That sounds": ["That's", "Seems", "Feels"],
-      "I'm sorry to hear": ["That's rough", "Damn", "Heavy"]
-    };
-    
-    let humanized = text;
-    Object.entries(roboticPhrases).forEach(([robotic, alternatives]) => {
-      if (humanized.includes(robotic)) {
-        const alt = alternatives[Math.floor(Math.random() * alternatives.length)];
-        humanized = humanized.replace(robotic, alt);
-      }
-    });
-    
-    return humanized;
-  }
-  
-  addThinkingPauses(text) {
-    const pauses = [
-      text => "Hmm... " + text,
-      text => text.replace(/\. /, "... "),
-      text => "Actually—" + text
-    ];
-    
-    const pause = pauses[Math.floor(Math.random() * pauses.length)];
-    return pause(text);
-  }
-  
-  async storeAndLearn(userMessage, botResponse, analysis, user) {
-    await this.db.storeMessage({
-      chat_id: user.chat_id,
-      sender: 'user',
-      message: userMessage,
-      detected_intent: analysis.intent.primary,
-      emotional_state: analysis.subtext
-    });
-    
-    await this.db.storeMessage({
-      chat_id: user.chat_id,
-      sender: 'bot',
-      message: botResponse,
-      bot_mood: this.personality.currentMood
-    });
-    
-    await this.memory.process(userMessage, botResponse, analysis);
   }
 
-  // handlers/ConversationHandler.js - Add this method
+  // ───────────────────────────────────────────────
+  // 🧍 GREETING HANDLER
+  // ───────────────────────────────────────────────
+  async handleGreeting(message, user) {
+    const greetings = ['hi', 'hello', 'hey', 'sup', 'yo'];
+    const lower = message.toLowerCase().trim();
+    if (!greetings.includes(lower)) return null;
 
-async handleGreeting(message, user) {
-  const greetings = ['hi', 'hello', 'hey', 'sup', 'yo'];
-  const lowerMessage = message.toLowerCase().trim();
-  
-  if (greetings.includes(lowerMessage)) {
-    // Track greeting metrics
-    // await this.trackMetric(user.id, 'greeting_received', {
-    //   timestamp: new Date(),
-    //   message_count: user.total_messages || 0
-    // });
+    await this.metrics.trackResponseToGreeting(user.id, message);
 
-    // When severity >= 5
-await this.metrics.trackVulnerability(user.id, messageCount, message, severity, emotion);
-
-// For greeting responses
-await this.metrics.trackResponseToGreeting(user.id, message);
-    
-    // Return the specific greeting response
     return {
       text: "Hey! How's your inner world today? Peaceful, chaotic, or somewhere in between?",
       metadata: {
@@ -304,21 +244,72 @@ await this.metrics.trackResponseToGreeting(user.id, message);
       }
     };
   }
-  
-  return null;
+
+  // ───────────────────────────────────────────────
+  // 🧍 STORAGE & MEMORY
+  // ───────────────────────────────────────────────
+async storeAndLearn(userMessage, botResponse, analysis, user) {
+  try {
+    const db = await this.getDb();
+    
+    // Store messages as before
+    await db.storeMessage(user.chat_id, 'user', userMessage);
+    await db.storeMessage(user.chat_id, 'bot', botResponse);
+
+    // Process memory if analysis exists
+    if (analysis) {
+      await this.memory.process(userMessage, botResponse, analysis);
+    }
+
+    // NEW: Trigger async summarization check
+    this.memoryManager.checkAndTriggerSummarization(user.chat_id);
+    
+  } catch (error) {
+    console.error('Error in storeAndLearn:', error);
+  }
 }
+  // ───────────────────────────────────────────────
+  // 🎭 HUMANIZATION
+  // ───────────────────────────────────────────────
+  async humanize(response, mood) {
+    let humanized = this.personality.generateQuirks(mood)(response);
+    humanized = this.removeRoboticPatterns(humanized);
+    if (Math.random() < 0.2) humanized = this.addThinkingPauses(humanized);
+    return humanized;
+  }
 
+  removeRoboticPatterns(text) {
+    const roboticPhrases = {
+      "I understand": ["Yeah", "I see", "Got it"],
+      "That sounds": ["That's", "Seems", "Feels"],
+      "I'm sorry to hear": ["That's rough", "Damn", "Heavy"]
+    };
+    let t = text;
+    for (const [r, a] of Object.entries(roboticPhrases)) {
+      if (t.includes(r)) t = t.replace(r, a[Math.floor(Math.random() * a.length)]);
+    }
+    return t;
+  }
 
-  // Placeholder methods
-  extractRelationships(message, user) {
+  addThinkingPauses(text) {
+    const pauses = [
+      t => "Hmm... " + t,
+      t => t.replace(/\. /, "... "),
+      t => "Actually—" + t
+    ];
+    return pauses[Math.floor(Math.random() * pauses.length)](text);
+  }
+
+  // ───────────────────────────────────────────────
+  // PLACEHOLDERS
+  // ───────────────────────────────────────────────
+  extractRelationships() {
     return [];
   }
-  
-  generateFallback(user) {
+
+  generateFallback() {
     return "Cosmic static... let me recalibrate...";
   }
-
-  
 }
 
 export default ConversationHandler;

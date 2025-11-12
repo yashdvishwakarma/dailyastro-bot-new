@@ -5,7 +5,7 @@ let processing = false;
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
 export function enqueueMessage(bot, method, chatId, payload, options = {}) {
-  console.log(`[Queue] ${method} → ${chatId} (${queue.length} waiting)`);
+  // console.log(`[Queue] ${method} → ${chatId} (${queue.length} waiting)`);
   return new Promise((resolve, reject) => {
     queue.push({ bot, method, chatId, payload, options, resolve, reject });
     processQueue();

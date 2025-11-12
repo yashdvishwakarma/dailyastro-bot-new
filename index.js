@@ -5,12 +5,12 @@ import TelegramBot from 'node-telegram-bot-api';
 import { enqueueMessage } from './utils/TelegramQueue.js';
 import AstroNowBot from './bot.js';
 import Dashboard from './monitoring/dashboard.js';
-import DatabaseService from './services/DatabaseService.js';
-import axios from 'axios';
+import getDatabase from './services/DatabaseService.js';
 
 const app = express();
 const bot = new AstroNowBot();
-const db = new DatabaseService();
+
+const db = await getDatabase();
 const dashboard = new Dashboard(db);
 
 // ✅ Patch global Telegram senders to always use the queue
@@ -42,14 +42,14 @@ app.get('/health', async (req, res) => {
 });
 
 // 📊 Dashboard endpoint
-app.get('/dashboard', async (req, res) => {
-  try {
-    const report = await dashboard.generateReport();
-    res.send(`<pre>${report}</pre>`);
-  } catch (error) {
-    res.status(500).send('Dashboard error: ' + error.message);
-  }
-});
+// app.get('/dashboard', async (req, res) => {
+//   try {
+//     const report = await dashboard.generateReport();
+//     res.send(`<pre>${report}</pre>`);
+//   } catch (error) {
+//     res.status(500).send('Dashboard error: ' + error.message);
+//   }
+// });
 
 // 🔗 Webhook endpoint for Telegram
 app.post(`/bot${process.env.TELEGRAM_TOKEN}`, json(), (req, res) => {
@@ -92,6 +92,7 @@ process.on('SIGTERM', async () => {
 // 🚀 Start server
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, async () => {
+
   console.log(`
 ╔══════════════════════════════════════╗
 ║   🌌 AstroNow v3.0 - Awakening...   ║
@@ -106,10 +107,10 @@ app.listen(PORT, async () => {
 
   await bot.start();
 
-  setInterval(async () => {
-    const metrics = await dashboard.collectMetrics();
-    console.log('📊 Metrics update:', metrics);
-  }, 30 * 60 * 1000);
+  // setInterval(async () => {
+  //   const metrics = await dashboard.collectMetrics();
+  //   // console.log('📊 Metrics update:', metrics);
+  // }, 30 * 60 * 1000);
 });
 
 export default app;

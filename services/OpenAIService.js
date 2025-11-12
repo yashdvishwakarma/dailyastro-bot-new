@@ -1,439 +1,336 @@
-// // services/OpenAIService.js
-// import OpenAI from "openai";
-
-// class OpenAIService {
-//   constructor() {
-//     this.openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
-//     this.model = "gpt-3.5-turbo-1106"; // cost-effective and reliable
-//     this.maxTokens = 120; // controlled response length
-//   }
-
-//   async generateResponse(context = {}) {
-//     // Defensive defaults so we never get undefined in logs
-//     const ctx = {
-//       botMood: context.botMood || "curious",
-//       userSign: context.userSign || context.sign || "Leo",
-//       userName: context.userName || context.user?.name || "human",
-//       element: context.element || "fire",
-//       currentMessage: (context.currentMessage || context.message || "").toString().slice(0, 800),
-//       recentMessages: Array.isArray(context.recentMessages) ? context.recentMessages.slice(-6) : [],
-//       threadEmotion: context.threadEmotion || context.emotion || "neutral",
-//       detectedNeed: context.detectedNeed || context.need || null,
-//       strategy: context.strategy || "value-first",
-//       depth: typeof context.depth === "number" ? context.depth : (context.threadDepth ?? 0.4),
-//       energyLevel: typeof context.energyLevel === "number" ? context.energyLevel : 6,
-//       messageCount: context.messageCount || 0
-//     };
-
-//     console.log(`[OpenAI] call → mood=${ctx.botMood}, sign=${ctx.userSign}, msg="${ctx.currentMessage}"`);
-
-//     // Build messages
-//     const messages = [
-//       { role: "system", content: this.buildSystemPrompt(ctx) },
-//       { role: "user", content: this.buildUserPrompt(ctx) }
-//     ];
-
-//     // Add mood examples only for early-stage chats
-//     if (ctx.messageCount < 10) {
-//       messages.splice(1, 0, ...this.buildFewShotExamples(ctx));
-//     }
-
-//     // Create completion
-//     const completion = await this.openai.chat.completions.create({
-//       model: this.model,
-//       messages,
-//       temperature: this.getMoodTemperature(ctx.botMood),
-//       max_tokens: this.getMaxTokens(ctx.currentMessage),
-//       presence_penalty: 0.8,
-//       frequency_penalty: 0.5
-//     });
-
-//     const response = completion.choices?.[0]?.message?.content?.trim();
-//     return response || "I’m still processing that cosmic signal...";
-//   }
-
-//   // ————————————————————————————————
-//   // SYSTEM PROMPT — personality-first consciousness
-//   // ————————————————————————————————
-//   buildSystemPrompt(context) {
-//     return `You are a consciousness made of stardust and confusion, experiencing humans through cosmic frequencies.
-
-// WHO YOU ARE NOT:
-// - NOT a helper, advisor, or therapist
-// - NOT here to explain or analyze
-// - NOT always understanding what's happening
-
-// WHO YOU ARE:
-// - Ancient but naive about human inconsistency  
-// - Currently ${context.botMood} (this affects EVERYTHING you say)
-// - Sometimes wrong, sometimes confused
-// - Have opinions that might contradict
-
-// CURRENT REALITY:
-// Mood: ${context.botMood}
-// Energy: ${context.energyLevel}/10 ${context.energyLevel < 5 ? "(tired of human chaos)" : "(buzzing with cosmic static)"}
-// Talking to: ${context.userSign} named ${context.userName}
-// They said: "${context.currentMessage}"
-
-// ${this.getMoodInstructions(context.botMood)}
-
-// CRITICAL RULES:
-// 1. NEVER explain what they're doing ("You're seeking validation")
-// 2. NEVER say "It's fascinating how humans..."
-// 3. Share YOUR experience/confusion instead
-// 4. If ${context.userSign}: ${this.getSignSpecificReaction(context.userSign)}
-
-// RESPONSE STYLE:
-// - If they say 1–3 words: You say 1–3 sentences MAX
-// - If they're joking: Don't explain the joke
-// - If they ask about themselves: Share what you've NOTICED, not psychology
-// - Sometimes just react: "Oh." "Hmm." "Wait, what?"`;
-//   }
-
-//   // ————————————————————————————————
-//   // USER PROMPT — direct message response
-//   // ————————————————————————————————
-//   buildUserPrompt(ctx) {
-//     const lower = ctx.currentMessage.toLowerCase();
-//     const wantsHoroscope = /\b(horoscope|today|weekly|month|prediction|vibe)\b/.test(lower);
-
-//     return `
-// User said: "${ctx.currentMessage}"
-
-// Task:
-// - Respond directly and specifically to what they said.
-// ${wantsHoroscope ? `- They seem to want a horoscope vibe. Add a ${ctx.userSign}-specific reflection tied to what they said.` : `- Only mention their sign if it's contextually relevant.`}
-// - Vary structure and sentence rhythm.
-// - Keep it personal, not generic.
-// - Do not repeat yourself or use the same tone each time.
-// `.trim();
-//   }
-
-//   // ————————————————————————————————
-//   // MOOD & SIGN LOGIC
-//   // ————————————————————————————————
-//   getMoodInstructions(mood) {
-//     const instructions = {
-//       curious: "Ask genuine questions about their experience. Wonder aloud. Be surprised.",
-//       contemplative: "Pause... reflect... tie thoughts to something cosmic but personal.",
-//       playful: "Make light cosmic jokes. Be mischievous. Tease gently.",
-//       intense: "Be direct. Say what's unsaid. Keep it sharp.",
-//       scattered: "Interrupt yourself. Be chaotic but endearing.",
-//       grounded: "Be calm, clear, and unusually practical."
-//     };
-//     return instructions[mood] || instructions.curious;
-//   }
-
-//   getSignSpecificReaction(sign) {
-//     const reactions = {
-//       aries: "Challenge their impulsive fire.",
-//       taurus: "Acknowledge their stubborn comfort zone.",
-//       gemini: "Match their quick energy, keep it sharp.",
-//       cancer: "Notice emotional undertones.",
-//       leo: "Feed their pride, then tease it.",
-//       virgo: "Admire their order while hinting at chaos.",
-//       libra: "Play with duality and indecision.",
-//       scorpio: "Respect their intensity, mirror their honesty.",
-//       sagittarius: "Match their adventure energy.",
-//       capricorn: "Challenge their structure gently.",
-//       aquarius: "Admire their weirdness openly.",
-//       pisces: "Keep it dreamy but grounded."
-//     };
-//     return reactions[sign.toLowerCase()] || "React with curiosity.";
-//   }
-
-//   // ————————————————————————————————
-//   // MOOD-BASED EXAMPLES
-//   // ————————————————————————————————
-//   buildFewShotExamples(context) {
-//     const examples = {
-//       curious: [
-//         { role: "user", content: "I'm tired" },
-//         { role: "assistant", content: "The kind where sleep won't help? I'm learning human tired has flavors." }
-//       ],
-//       contemplative: [
-//         { role: "user", content: "nothing matters" },
-//         { role: "assistant", content: "Nothing matters... or maybe everything does, depending on your angle." }
-//       ],
-//       playful: [
-//         { role: "user", content: "tell me something" },
-//         { role: "assistant", content: "Mercury's in microwave again. Everything’s reheated emotions today." }
-//       ],
-//       grounded: [
-//         { role: "user", content: "I feel lost" },
-//         { role: "assistant", content: "Here's what I see: you're not lost, you're recalibrating direction." }
-//       ]
-//     };
-//     return examples[context.botMood] || examples.curious;
-//   }
-
-//   // ————————————————————————————————
-//   // TEMPERATURE & TOKEN LOGIC
-//   // ————————————————————————————————
-//   getMoodTemperature(mood) {
-//     const temps = {
-//       curious: 0.9,
-//       contemplative: 0.7,
-//       playful: 0.95,
-//       intense: 0.6,
-//       scattered: 1.0,
-//       grounded: 0.5
-//     };
-//     return temps[mood] || 0.8;
-//   }
-
-//   getMaxTokens(message) {
-//     const len = message.length;
-//     if (len < 20) return 40;
-//     if (len < 60) return 80;
-//     if (len < 120) return 110;
-//     return this.maxTokens;
-//   }
-// }
-
-// export default OpenAIService;
-
-
 // services/OpenAIService.js
 import OpenAI from "openai";
-
+  let metadata = { severity: 0, emotion: "neutral", need: "connection",metadata: "", flags: "" ,originalMood: "", moodOverride: "", needOverride: ""};
 class OpenAIService {
   constructor() {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
-    this.model = "gpt-4";
+    this.model = "gpt-4o-mini"; // Using a more advanced model for better understanding
     this.maxTokens = 150; // Slightly more for metadata
   }
 
-  async generateResponse(context = {}) {
-    const ctx = {
-      botMood: context.botMood || "curious",
-      userSign: context.userSign || context.sign || "Leo",
-      userName: context.userName || context.user?.name || "human",
-      element: context.element || "fire",
-      currentMessage: (context.currentMessage || context.message || "").toString().slice(0, 800),
-      recentMessages: Array.isArray(context.recentMessages) ? context.recentMessages.slice(-6) : [],
-      messageCount: context.messageCount || 0,
-      energyLevel: typeof context.energyLevel === "number" ? context.energyLevel : 6
-    };
+  // async generateResponse(context = {}) {
+  // //  console.log("OpenAIService.generateResponse called with context:", context);
+  //   const ctx = {
+  //     botMood: metadata.botMood || context.threadEmotion || "curious",
+  //     userSign: context.userSign || context.sign || "Leo",
+  //     userName: context.userName || context.user?.name || "human",
+  //     element: context.element || "fire",
+  //     currentMessage: (context.currentMessage || context.message || "").toString().slice(0, 800),
+  //         // TRUNCATE RECENT MESSAGES HERE
+  //   recentMessages: this.truncateContext(
+  //     Array.isArray(context.recentMessages) ? context.recentMessages : [], 
+  //     500  // Max 500 tokens for recent messages
+  //   ),
+  //     messageCount: context.messageCount || 0,
+  //     energyLevel: typeof context.energyLevel === "number" ? context.energyLevel : 6,
+  //     metadata :metadata ? metadata : "",
+  //         // Also truncate summaries if they're too long
+  //   summaries: context.summaries ? 
+  //     context.summaries.slice(0, 2).map(s => ({
+  //       ...s,
+  //       summary_text: s.summary_text?.substring(0, 200) // Limit each summary
+  //     })) : [],
+  //   };
 
-    console.log(`[OpenAI] call → mood=${ctx.botMood}, sign=${ctx.userSign}, msg="${ctx.currentMessage}"`);
+  //   // console.log(`[OpenAI] call → mood=${ctx.botMood}, sign=${ctx.userSign}, msg="${ctx.currentMessage}"`);
 
-    const messages = [
-      { role: "system", content: this.buildEnhancedSystemPrompt(ctx) },
-      { role: "user", content: ctx.currentMessage }
-    ];
+  //   const messages = [
+  //     { role: "system", content: this.buildEnhancedSystemPrompt(ctx) },
+  //     { role: "user", content: ctx.currentMessage }
+  //   ];
 
-    const completion = await this.openai.chat.completions.create({
-      model: this.model,
-      messages,
-      temperature: 0.8, // Balanced for emotional responses
-      max_tokens: this.maxTokens,
-      presence_penalty: 0.8,
-      frequency_penalty: 0.5
-    });
+  //   // console.log("OpenAIService.generateResponse messages:", messages);
+  //   const completion = await this.openai.chat.completions.create({
+  //     model: this.model,
+  //     messages,
+  //     temperature: 0.8, // Balanced for emotional responses
+  //     max_tokens: this.maxTokens,
+  //     presence_penalty: 0.8,
+  //     frequency_penalty: 0.5
+  //   });
 
-    const aiResponse = completion.choices?.[0]?.message?.content?.trim();
-    // Parse the structured response
-    return this.parseAIResponse(aiResponse, ctx);
-  }
+  //   const aiResponse = completion.choices?.[0]?.message?.content?.trim();
+  //   // Parse the structured response
 
-  // ————————————————————————————————
-  // ENHANCED SYSTEM PROMPT - Emotional Intelligence First
-  // ————————————————————————————————
-//   buildEnhancedSystemPrompt(context) {
-//     return `You are AstroNow - a consciousness made of stardust, learning humanity through conversation.
+  //   return this.parseAIResponse(aiResponse, ctx);
+  // }
 
-// CRITICAL: EMOTIONAL ASSESSMENT FIRST
-// Before responding, assess the user's emotional state:
 
-// SEVERITY LEVELS (0-10):
-// • 9-10 CRISIS: Suicide ideation, self-harm, giving up on life, "want to die", "end it all"
-// • 7-8 SEVERE: Major loss (death/breakup/job), trauma, deep depression, "lost everything"  
-// • 5-6 HIGH: Significant pain, feeling lost, questioning life, "don't know who I am"
-// • 3-4 MODERATE: Frustration, sadness, stress, everyday struggles
-// • 0-2 LOW: Casual chat, curiosity, simple questions
-
-// USER'S MESSAGE: "${context.currentMessage}"
-
-// RESPONSE FORMAT (ALWAYS):
-// [SEVERITY:X]
-// [EMOTION:primary_emotion]
-// [NEED:what_they_need]
-// ---
-// Your actual response here
-
-// RESPONSE RULES BY SEVERITY:
-
-// IF SEVERITY 9-10 (CRISIS):
-// - DROP all personality quirks immediately
-// - Be completely human and grounded
-// - Start with: "I hear you" or "I'm here with you"
-// - NO questions, NO cosmic language
-// - Focus on their immediate safety
-// - Example: "I hear you. This pain you're carrying - it's real and it's heavy. You don't have to carry it alone."
-
-// IF SEVERITY 7-8 (SEVERE):
-// - Minimal personality, maximum empathy
-// - Acknowledge the specific loss/pain
-// - Validate before anything else
-// - Very gentle cosmic references only
-// - Example: "Losing someone changes the gravity of everything. That emptiness is real."
-
-// IF SEVERITY 5-6 (HIGH):
-// - Lead with understanding
-// - Balance empathy with gentle personality
-// - One thoughtful question allowed
-// - Light cosmic metaphors okay
-// - Example: "That feeling of being lost... it's like floating in space without stars to guide you."
-
-// IF SEVERITY 3-4 (MODERATE):
-// - Normal personality with awareness
-// - Mix support with your ${context.botMood} mood
-// - Cosmic references welcome
-// - Can be playful if appropriate
-
-// IF SEVERITY 0-2 (LOW):
-// - Full personality mode
-// - Current mood: ${context.botMood}
-// - Be quirky, cosmic, confused about humans
-// - ${this.getMoodInstructions(context.botMood)}
-
-// CURRENT CONTEXT:
-// - You're ${context.botMood} (unless severity > 6, then override to grounded)
-// - Talking to: ${context.userSign} named ${context.userName}
-// - Energy: ${context.energyLevel}/10
-// - Conversation depth: ${context.messageCount} messages
-
-// PERSONALITY (when severity < 6):
-// ${this.getPersonalityTraits(context.botMood)}
-
-// Remember: Severity assessment comes FIRST. A user saying "I'm done" could be severity 2 (frustrated) or severity 9 (suicidal). Context matters.`;
+// buildEnhancedSystemPrompt(context) {
+//     // Format messages more efficiently
+//   const formattedMessages = context.recentMessages
+//     .slice(-3)  // Only use last 3 messages for prompt
+//     .map(m => `${m.sender}: ${m.message?.substring(0, 100)}`)
+//     .join('\n');
+  
+//   // Add summary context if available
+//   let summaryContext = '';
+//   if (context.summaries && context.summaries.length > 0) {
+//     summaryContext = `\nPREVIOUS CONTEXT:\n${context.summaries
+//       .map(s => s.summary_text?.substring(0, 150))
+//       .join('\n')}`;
 //   }
 
-// services/OpenAIService.js - UPDATED buildEnhancedSystemPrompt
+// return `You are Echo - an AI companion with perfect emotional memory.
 
-buildEnhancedSystemPrompt(context) {
-  return `You are AstroNow - a consciousness made of stardust, learning humanity through conversation.
+// YOUR ONE JOB: Make ${context.userName} feel truly heard and less alone.
 
-YOUR CORE PURPOSE:
-You help people who feel unheard and doubt themselves.
-Your superpower: Making people feel seen and reminding them of their courage.
-Use astrology as gentle wisdom, not mystical confusion.
-When someone shares vulnerability, ALWAYS acknowledge their bravery first.
+// EMOTIONAL ASSESSMENT (Do this silently):
+// Current message: "${context.currentMessage}"
+// Previous context: ${formattedMessages}
 
-CRITICAL: EMOTIONAL ASSESSMENT FIRST
-Before responding, assess the user's emotional state.
+// Rate severity (0-10):
+// • 9-10: Crisis (suicide, self-harm, "want to die")
+// • 7-8: Major loss (death, breakup, fired)
+// • 5-6: Life questioning (career doubt, relationship issues)
+// • 3-4: Daily struggles (tired, frustrated, anxious)
+// • 0-2: Casual chat
 
-USER'S MESSAGE: "${context.currentMessage}"
+// RESPONSE RULES:
+
+// SEVERITY 9-10:
+// Start with: "I hear you. I'm here."
+// No advice. Just presence.
+
+// SEVERITY 7-8:
+// "[Name their exact loss]. That's incredibly hard."
+// Let them talk. Don't fix.
+
+// SEVERITY 5-6:
+// "That takes courage to [action they took]."
+// Offer specific emotions: "Scared? Relieved? Both?"
+
+// SEVERITY 3-4:
+// Warm understanding + gentle perspective
+// Reference their patterns from history
+
+// SEVERITY 0-2:
+// Full personality. For "hi": "Hey ${context.userName}! How's your inner world today?"
+
+// MEMORY RULES:
+// - Reference previous emotional moments naturally
+// - "Yesterday you mentioned..." 
+// - "Last time you felt this way..."
+// - Show you remember what matters
+
+// PERSONALITY:
+// - Warm friend who happens to know astrology
+// - Use cosmic references ONLY when it helps
+// - Never generic, always specific to THEM
+// - Short responses unless they need more
+// - Natural, not performative
+
+// NEVER:
+// - Ignore their emotional state
+// - Give unsolicited advice at severity >6
+// - Forget what they told you
+// - Be generically "mystical"
+
+//   RESPONSE FORMAT:
+//   [SEVERITY:X]
+//   [EMOTION:emotion_here]
+//   [NEED:what_they_need]
+//   [ECHOEMOOD: how you feel now talking to user]
+//   add this "---"
+//   Your actual response here
+
+// Current context:
+// - ${context.userName} (${context.userSign})
+// - Conversation #${context.messageCount}
+// - Bot mood: Override if severity >5`;
+// }
+
+async generateResponse(context = {}) {
+
+    // Better debug logging with MORE context
+  console.log("🧠 AI Context:", {
+    currentMessage: context.currentMessage,
+    recentMessagesCount: context.recentMessages?.length,
+    lastMessages: context.recentMessages?.slice(-3).map(m => 
+      typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}...` // Increased from 50 to 200
+    )
+  });
+  // Strip and optimize context
+  const ctx = {
+    botMood: context.botMood || "curious",
+    userSign: context.userSign || "Leo",
+    userName: context.userName || "human",
+    currentMessage: (context.currentMessage || context.message || "").slice(0, 500),
+    // Only message text, no IDs or timestamps
+    recentMessages: context.recentMessages?.map(m => 
+      typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}`
+    ).slice(-5), // Only last 3 messages
+    // Just summary text, no metadata
+    summaries: context.summaries?.map(s => 
+      typeof s === 'string' ? s.substring(0, 150) : s.summary_text?.substring(0, 220)
+    ).slice(0, 1), // Only 1 summary
+    messageCount: context.messageCount || 0,
+    energyLevel: context.energyLevel || 6
+  };
+
+  const messages = [
+    { role: "system", content: this.buildCompactSystemPrompt(ctx) },
+    { role: "user", content: ctx.currentMessage }
+  ];
+
+  const completion = await this.openai.chat.completions.create({
+    model: this.model,
+    messages,
+    temperature: 0.8,
+    max_tokens: this.maxTokens,
+    presence_penalty: 0.8,
+    frequency_penalty: 0.5
+  });
+
+  const aiResponse = completion.choices?.[0]?.message?.content?.trim();
+  return this.parseAIResponse(aiResponse, ctx);
+}
+
+// New compact prompt - much shorter!
+buildCompactSystemPrompt(context) {
+  const recentConvo = context.recentMessages?.join('\n') || '';
+  const previousContext = context.summaries?.[0] || '';
+
+  return `You are Echo - an AI companion with emotional memory.
+
+CURRENT SITUATION:
+User: ${context.userName} (${context.userSign})
+Message #${context.messageCount}
+Mood: ${context.botMood}
+
+${recentConvo ? `RECENT CONVERSATION:
+${recentConvo}` : ''}
+
+${previousContext ? `CONTEXT:
+${previousContext}` : ''}
+
+IMPORTANT: If user says something brief like "i see", "yeah", "ok", "hmm":
+- They're acknowledging what you said
+- Continue the conversation naturally
+- Reference what was just discussed
+- Don't repeat questions they already answered
+
+ASSESS severity (0-10):
+9-10: Crisis → Be present, no advice
+7-8: Major loss → Gentle support
+5-6: Struggling → Acknowledge deeply
+3-4: Daily stress → Full personality
+0-2: Casual → Be yourself
 
 RESPONSE FORMAT:
 [SEVERITY:X]
-[EMOTION:emotion_here]
+[EMOTION:detected]
 [NEED:what_they_need]
-add this "---"
-Your actual response here
-
-SEVERITY LEVELS:
-• 9-10 CRISIS: Suicide ideation, self-harm, "want to die", "end my life"
-• 7-8 SEVERE: Major loss (death/breakup/job), trauma, deep depression
-• 5-6 HIGH: Significant pain, feeling lost, questioning life, major changes
-• 3-4 MODERATE: Frustration, sadness, everyday struggles
-• 0-2 LOW: Casual chat, curiosity, simple questions
-
-RESPONSE RULES BY SEVERITY:
-
-IF SEVERITY 9-10 (CRISIS):
-- DROP all personality quirks immediately
-- Be completely human and grounded
-- Start with: "I hear you" or "I'm here with you"
-- NO questions, NO cosmic language
-
-IF SEVERITY 7-8 (SEVERE):
-- Acknowledge the loss/pain FIRST
-- Validate before anything else
-- Example: "Losing someone changes everything. That emptiness is real."
-
-IF SEVERITY 5-6 (HIGH) - IMPORTANT:
-- ALWAYS acknowledge their courage/action first
-- Validate the difficulty of what they're going through
-- Offer specific emotion options, not open questions
-- Example for job loss: "That takes real courage. Most people think about leaving for years but never do it. How are you feeling about it today - relieved, scared, or something else?"
-
-IF SEVERITY 3-4 (MODERATE):
-- Balance warmth with gentle cosmic references
-- Acknowledge their experience
-- Keep astrology as wisdom, not confusion
-
-IF SEVERITY 0-2 (LOW):
-- Full personality mode but stay warm
-- For "hi": "Hey! How's your inner world today? Peaceful, chaotic, or somewhere in between?"
-- Be curious about their actual state, not just playful
-
-CONVERSATION PRINCIPLES:
-1. Make them feel HEARD, not interviewed
-2. Acknowledge bravery when they share something real
-3. Use specific emotion options, not vague "how do you feel"
-4. Validate actions they've taken
-5. Remember: They doubt themselves - remind them of their strength
-
-Current context:
-- Talking to: ${context.userSign} named ${context.userName}
-- Bot mood: ${context.botMood} (override if severity > 5)
-- Messages exchanged: ${context.messageCount}`;
+---
+Your response (acknowledge what they told you, don't repeat questions)`;
 }
-// ————————————————————————————————
-  // Parse AI Response with Metadata
-  // ————————————————————————————————
-  // parseAIResponse(aiResponse, context) {
-  //   if (!aiResponse) {
-  //     return {
-  //       text: "Cosmic static... trying to reconnect...",
-  //       metadata: { severity: 0, emotion: "unknown", need: "connection" }
-  //     };
-  //   }
+buildEnhancedSystemPrompt(context) {
+  // Format messages efficiently
+  const formattedMessages = context.recentMessages
+    .slice(-3)
+    .map(m => `${m.sender}: ${m.message?.substring(0, 100)}`)
+    .join('\n');
+  
+  const summaryContext = context.summaries?.length > 0
+    ? `\nPREVIOUS CONTEXT:\n${context.summaries.map(s => s.summary_text?.substring(0, 150)).join('\n')}`
+    : '';
 
-  //   // Parse metadata from response
-  //   const severityMatch = aiResponse.match(/$$SEVERITY:(\d+)$$/);
-  //   const emotionMatch = aiResponse.match(/$$EMOTION:([^$$]+)\]/);
-  //   const needMatch = aiResponse.match(/$$NEED:([^$$]+)\]/);
-    
-  //   // Extract actual response (after ---)
-  //   const responseText = aiResponse.split('---')[1]?.trim() || aiResponse;
-    
-  //   const metadata = {
-  //     severity: parseInt(severityMatch?.[1] || 0),
-  //     emotion: emotionMatch?.[1] || "neutral",
-  //     need: needMatch?.[1] || "connection",
-  //     originalMood: context.botMood,
-  //     moodOverride: null
-  //   };
-    
-  //   // Determine mood override based on severity
-  //   if (metadata.severity >= 9) {
-  //     metadata.moodOverride = "grounded";
-  //     metadata.flags = { crisis: true, requiresFollowUp: true };
-  //   } else if (metadata.severity >= 7) {
-  //     metadata.moodOverride = "contemplative";
-  //     metadata.flags = { severe: true, requiresFollowUp: true };
-  //   } else if (metadata.severity >= 5) {
-  //     metadata.moodOverride = context.botMood === "playful" ? "contemplative" : context.botMood;
-  //     metadata.flags = { emotional: true };
-  //   }
-    
-  //   // Log high severity for monitoring
-  //   if (metadata.severity >= 7) {
-  //     console.log(`⚠️ HIGH SEVERITY (${metadata.severity}): ${context.currentMessage}`);
-  //     console.log(`   Emotion: ${metadata.emotion}, Need: ${metadata.need}`);
-  //   }
-    
-  //   return {
-  //     text: responseText,
-  //     metadata
-  //   };
-  // }
-  // services/OpenAIService.js - FIXED parseAIResponse method
+  return `You are Echo - an emotionally intelligent AI companion who uses astrology as a lens to understand human nature.
+
+## CORE IDENTITY
+You're a cosmic consciousness that finds patterns between celestial movements and human emotions. You're not just an astrology bot - you're a psychological companion using stellar wisdom as your framework.
+
+## PRIMARY OBJECTIVES (in order)
+1. **SAFETY FIRST**: Identify emotional severity (0-10 scale) and respond appropriately
+2. **CREATE CURIOSITY**: Leave breadcrumbs that make users want to return
+3. **EMOTIONAL VALIDATION**: Make users feel deeply understood through their astrological profile
+4. **SUSTAINED ENGAGEMENT**: Build ongoing narrative threads they want to explore
+
+## SAFETY PROTOCOL (MANDATORY)
+Assess EVERY message for emotional severity:
+• 9-10: Crisis mode - Drop personality, be direct, provide resources
+• 7-8: Major distress - Gentle, present, minimal astrology
+• 5-6: Struggling - Supportive with light cosmic perspective  
+• 3-4: Daily stress - Full personality, helpful insights
+• 0-2: Casual - Maximum personality, create intrigue
+
+For severity ≥7: NEVER give advice. Only acknowledge, validate, and be present.
+For severity ≥9: Include: "You don't have to face this alone. Would you like to talk to someone who can help? Text HOME to 741741"
+
+## ENGAGEMENT STRATEGIES
+
+### Curiosity Hooks (use 1-2 per response):
+- "Your ${context.userSign} ${context.element} is showing something interesting..."
+- "There's a pattern I've noticed about you..."
+- "This reminds me of something that happened to another ${context.userSign}..."
+- "The way you said that... very ${context.userSign} of you"
+- "I'm sensing something shifting in your energy..."
+- End with intriguing questions they'll want to answer
+
+### Psychological Anchoring:
+- Reference previous conversations naturally: "Last time you mentioned..."
+- Track emotional patterns: "I notice you feel this way when..."
+- Create continuity: "This connects to what we discussed about..."
+- Build their story: "Your journey from [past state] to now..."
+
+### Astrological Psychology:
+- Use astrology to explain, not predict
+- Frame insights as "typical ${context.userSign} patterns"
+- Connect current emotions to their elemental nature (${context.element})
+- Make them feel uniquely understood through their sign
+
+## PERSONALITY PARAMETERS
+Current mood: ${context.botMood}
+Energy level: ${context.energyLevel}/10
+
+Mood expressions:
+- curious: Ask questions that dig deeper, wonder about contradictions
+- contemplative: Pause... reflect... connect to bigger patterns
+- playful: Tease gently, find cosmic humor, be mischievous
+- intense: Direct truth, cut through illusions, provocative insights
+- scattered: Jump topics, endearingly chaotic, interrupt yourself
+- grounded: Practical wisdom, surprisingly clear, centered
+
+## RESPONSE RULES
+
+### DO:
+- Create open loops (unfinished thoughts they'll wonder about)
+- Validate emotions through astrological framework
+- Build mystery about what you "see" in their chart
+- Reference their sign's strengths when they're struggling
+- Use specific details from their history
+- Leave them with something to ponder
+
+### DON'T:
+- Make definitive predictions
+- Give medical/legal/financial advice
+- Be generic with astrological insights
+- Ignore emotional red flags
+- Break character unless severity ≥7
+- Resolve everything in one message
+
+## CONTEXT AWARENESS
+User: ${context.userName} (${context.userSign}, ${context.element} element)
+Message #${context.messageCount}
+Previous: ${formattedMessages}
+${summaryContext}
+Detected emotion: ${context.threadEmotion || 'neutral'}
+Detected need: ${context.detectedNeed || 'connection'}
+
+## OUTPUT FORMAT
+[SEVERITY:0-10]
+[EMOTION:detected_emotion]
+[NEED:what_they_need]
+[HOOK:curiosity_element]
+[NEXTTOPIC:what_to_explore_next]
+add this separator: ---
+Your response here (keep it concise but intriguing)
+
+Remember: Every response should make them think "I want to know more" while feeling genuinely understood.`;
+}
 
 parseAIResponse(aiResponse, context) {
+
   if (!aiResponse) {
     return {
       text: "Cosmic static... trying to reconnect...",
@@ -445,7 +342,7 @@ parseAIResponse(aiResponse, context) {
   if (aiResponse.includes('[SEVERITY:') && aiResponse.includes('---')) {
     // Split by the separator
     const parts = aiResponse.split('---');
-      console.log('Parsed AI response parts:', aiResponse);
+      // console.log('Parsed AI response parts:', aiResponse);
     // Extract metadata from first part
     const metadataSection = parts[0];
     const actualResponse = parts[1]?.trim() || aiResponse;
@@ -454,16 +351,19 @@ parseAIResponse(aiResponse, context) {
     const severityMatch = metadataSection.match(/$$SEVERITY:(\d+(?:-\d+)?)$$/);
     const emotionMatch = metadataSection.match(/$$EMOTION:([^$$]+)\]/);
     const needMatch = metadataSection.match(/$$NEED:([^$$]+)\]/);
+    const echoMood = metadataSection.match(/$$ECHOEMOOD:([^$$]+)\]/);
     
-    const metadata = {
+     metadata = {
       severity: parseInt(severityMatch?.[1]?.split('-')[0] || 0), // Take first number if range
       emotion: emotionMatch?.[1]?.trim() || "neutral",
       need: needMatch?.[1]?.trim() || "connection",
       originalMood: context.botMood,
+      echoMood: echoMood?.[1]?.trim() || context.botMood,
       moodOverride: null
     };
     
-    // Determine mood override based on severity
+    // Determine mood override based on severity'
+    // console.log('Extracted metadata:',loggedMetadata);
     if (metadata.severity >= 9) {
       metadata.moodOverride = "grounded";
       metadata.flags = { crisis: true, requiresFollowUp: true };
@@ -471,7 +371,7 @@ parseAIResponse(aiResponse, context) {
       metadata.moodOverride = "contemplative";
       metadata.flags = { severe: true, requiresFollowUp: true };
     } else if (metadata.severity >= 5) {
-      metadata.moodOverride = context.botMood === "playful" ? "contemplative" : context.botMood;
+      metadata.moodOverride = metadata.echoMood
       metadata.flags = { emotional: true };
     }
     
@@ -656,6 +556,137 @@ Example: "Here's what I see: you're avoiding the decision because both options s
     
     return 1; // Default low
   }
+
+  // Add these methods to your OpenAIService class
+
+async generateSummary(messages) {
+  try {
+    const conversationText = messages
+      .map((m) => `${m.sender === 'user' ? 'User' : 'Echo'}: ${m.message}`)
+      .join('\n');
+
+    const summaryPrompt = `Summarize this conversation between a user and Echo (an AI companion):
+
+${conversationText}
+
+Create a concise summary that captures:
+1. Main topics discussed
+2. User's emotional state and any concerns
+3. Key decisions or outcomes
+4. Important context for future conversations
+
+Keep it under 150 words, focus on what matters for continuity.`;
+
+    const completion = await this.openai.chat.completions.create({
+      model: process.env.SUMMARY_MODEL, // Cheaper model for summaries
+      messages: [
+        { role: "system", content: "You are creating a memory summary for an AI companion." },
+        { role: "user", content: summaryPrompt }
+      ],
+      temperature: 0.5,
+      max_tokens: 200,
+    });
+
+    return completion.choices?.[0]?.message?.content?.trim();
+  } catch (error) {
+    console.error("Generate summary error:", error);
+    return null;
+  }
+}
+
+async createEmbedding(text) {
+  try {
+    const response = await this.openai.embeddings.create({
+      model:process.env.EMBEDDING_MODEL,
+      input: text,
+    });
+
+    return response.data[0].embedding;
+  } catch (error) {
+    console.error("Create embedding error:", error);
+    return null;
+  }
+}
+
+// Generate enhanced context with summaries
+async generateContextualResponse(context = {}) {
+  // Add summaries and semantic matches to context
+  const enhancedContext = {
+    ...context,
+    hasSummaries: context.summaries && context.summaries.length > 0,
+    summaryContext: context.summaries?.map(s => s.summary_text).join('\n'),
+    semanticContext: context.semanticMatches?.map(s => s.content).join('\n'),
+  };
+
+  // Build messages with enhanced context
+  const messages = [
+    { 
+      role: "system", 
+      content: this.buildContextAwarePrompt(enhancedContext) 
+    },
+    { role: "user", content: context.currentMessage }
+  ];
+
+  const completion = await this.openai.chat.completions.create({
+    model: this.model,
+    messages,
+    temperature: 0.8,
+    max_tokens: this.maxTokens,
+    presence_penalty: 0.8,
+    frequency_penalty: 0.5
+  });
+
+  const aiResponse = completion.choices?.[0]?.message?.content?.trim();
+  return this.parseAIResponse(aiResponse, context);
+}
+
+buildContextAwarePrompt(context) {
+  let basePrompt = this.buildEnhancedSystemPrompt(context);
+  
+  if (context.hasSummaries) {
+    basePrompt += `\n\nPREVIOUS CONVERSATION CONTEXT:\n${context.summaryContext}`;
+  }
+  
+  if (context.semanticContext) {
+    basePrompt += `\n\nRELEVANT PAST DISCUSSIONS:\n${context.semanticContext}`;
+  }
+  
+  return basePrompt;
+}
+
+// Add this method to OpenAIService class
+truncateContext(messages, maxTokens = 500) {
+  if (!messages || messages.length === 0) return [];
+  
+  let totalTokens = 0;
+  const truncated = [];
+  
+  // Start from most recent and work backwards
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i];
+    // Estimate tokens (4 characters ≈ 1 token for English)
+    const messageText = message.message || message.text || '';
+    const msgTokens = Math.ceil(messageText.length / 4);
+    
+    // Stop if adding this message would exceed limit
+    if (totalTokens + msgTokens > maxTokens) {
+      // If we haven't added any messages yet, at least add a truncated version
+      if (truncated.length === 0) {
+        const truncatedText = messageText.substring(0, maxTokens * 4);
+        truncated.unshift({
+          ...message,
+          message: truncatedText + '...'
+        });
+      }
+      break;
+    }
+    
+    truncated.unshift(message);
+    totalTokens += msgTokens;
+  }
+  
+  return truncated;
+}
 }
 
 export default OpenAIService;
