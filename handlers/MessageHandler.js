@@ -22,8 +22,6 @@ export class MessageHandler {
 
     if (!text || text.startsWith('/')) return;
 
-    console.log(`💬 [${chatId}] ${text}`);
-
     try {
       // Get user state (single source of truth)
       const user = await this.stateManager.getUser(chatId);
@@ -56,12 +54,11 @@ export class MessageHandler {
 
     // Detect emotion
     const emotion = await this.emotionService.detectEmotion(text);
-    
     // Store user message
     await this.db.storeMessage(chatId, 'user', text, emotion.primary_emotion);
 
     // Get context
-    const recentMessages = await this.db.getRecentMessages(chatId, 5);
+    const recentMessages = await this.db.getRecentMessages(chatId, 10);
     
     // Build prompt
     const prompt = this.buildPrompt(user, text, emotion, recentMessages);
@@ -73,7 +70,7 @@ const response = await this.ai.generateResponse({
   userSign: user.sign,
   element: user.element,
   currentMessage: message, // ✅ <-- THIS IS CRITICAL
-  recentMessages: await this.db.getRecentMessages(user.chat_id, 5),
+  recentMessages: await this.db.getRecentMessages(user.chat_id, 10),
   threadEmotion: analysis.subtext.emotion,
   detectedNeed: analysis.intent.need,
   strategy: analysis.intent.primary,
@@ -83,8 +80,7 @@ const response = await this.ai.generateResponse({
 
     
     // Send response (rate-limited)
-    await enqueueMessage(bot, 'sendMessage', chatId, response, { parse_mode: 'Markdown' });
-    
+    await enqueueMessage(bot, 'sendMessage handleConversation message handler', chatId, response, { parse_mode: 'Markdown' });
     // Store bot response
     await this.db.storeMessage(chatId, 'bot', response);
 
@@ -152,7 +148,6 @@ RESPONSE RULES:
 
       // Detect emotion from message
       const emotion = await this.emotionService.detectEmotion(text);
-
       // Store user message
       await this.databaseService.storeMessage(chatId, text, 'user', emotion);
 
@@ -171,7 +166,6 @@ RESPONSE RULES:
 
       // Send response safely
       await enqueueMessage(bot, 'sendMessage', chatId, aiResponse);
-
       // Store AI response
       await this.databaseService.storeMessage(chatId, aiResponse, 'assistant');
 
@@ -194,7 +188,7 @@ RESPONSE RULES:
 
   // Enhanced context builder
   async buildContext(user, emotion, text) {
-    const recentMessages = await this.databaseService.getRecentMessages(user.chat_id, 5);
+    const recentMessages = await this.databaseService.getRecentMessages(user.chat_id, 20);
     
     return {
       user: {
@@ -210,7 +204,6 @@ RESPONSE RULES:
 
   // Enhanced response generation
   async generateResponse(context, userMessage) {
-    console.log(`[OpenAI] in the fucntion Generating response for mood=${context.botMood}, sign=${context.userSign}`);
 
     const { user, emotion, isHookResponse } = context;
     
