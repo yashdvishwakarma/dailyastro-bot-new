@@ -1,5 +1,6 @@
 // services/OpenAIService.js
 import OpenAI from "openai";
+import PersonalityService from "../services/PersonalityService.js";
   let metadata = { severity: 0, emotion: "neutral", need: "connection",metadata: "", flags: "" ,originalMood: "", moodOverride: "", needOverride: ""};
 class OpenAIService {
   constructor() {
@@ -7,138 +8,6 @@ class OpenAIService {
     this.model = "gpt-4o-mini"; // Using a more advanced model for better understanding
     this.maxTokens = 150; // Slightly more for metadata
   }
-
-  // async generateResponse(context = {}) {
-  // //  console.log("OpenAIService.generateResponse called with context:", context);
-  //   const ctx = {
-  //     botMood: metadata.botMood || context.threadEmotion || "curious",
-  //     userSign: context.userSign || context.sign || "Leo",
-  //     userName: context.userName || context.user?.name || "human",
-  //     element: context.element || "fire",
-  //     currentMessage: (context.currentMessage || context.message || "").toString().slice(0, 800),
-  //         // TRUNCATE RECENT MESSAGES HERE
-  //   recentMessages: this.truncateContext(
-  //     Array.isArray(context.recentMessages) ? context.recentMessages : [], 
-  //     500  // Max 500 tokens for recent messages
-  //   ),
-  //     messageCount: context.messageCount || 0,
-  //     energyLevel: typeof context.energyLevel === "number" ? context.energyLevel : 6,
-  //     metadata :metadata ? metadata : "",
-  //         // Also truncate summaries if they're too long
-  //   summaries: context.summaries ? 
-  //     context.summaries.slice(0, 2).map(s => ({
-  //       ...s,
-  //       summary_text: s.summary_text?.substring(0, 200) // Limit each summary
-  //     })) : [],
-  //   };
-
-  //   // console.log(`[OpenAI] call → mood=${ctx.botMood}, sign=${ctx.userSign}, msg="${ctx.currentMessage}"`);
-
-  //   const messages = [
-  //     { role: "system", content: this.buildEnhancedSystemPrompt(ctx) },
-  //     { role: "user", content: ctx.currentMessage }
-  //   ];
-
-  //   // console.log("OpenAIService.generateResponse messages:", messages);
-  //   const completion = await this.openai.chat.completions.create({
-  //     model: this.model,
-  //     messages,
-  //     temperature: 0.8, // Balanced for emotional responses
-  //     max_tokens: this.maxTokens,
-  //     presence_penalty: 0.8,
-  //     frequency_penalty: 0.5
-  //   });
-
-  //   const aiResponse = completion.choices?.[0]?.message?.content?.trim();
-  //   // Parse the structured response
-
-  //   return this.parseAIResponse(aiResponse, ctx);
-  // }
-
-
-// buildEnhancedSystemPrompt(context) {
-//     // Format messages more efficiently
-//   const formattedMessages = context.recentMessages
-//     .slice(-3)  // Only use last 3 messages for prompt
-//     .map(m => `${m.sender}: ${m.message?.substring(0, 100)}`)
-//     .join('\n');
-  
-//   // Add summary context if available
-//   let summaryContext = '';
-//   if (context.summaries && context.summaries.length > 0) {
-//     summaryContext = `\nPREVIOUS CONTEXT:\n${context.summaries
-//       .map(s => s.summary_text?.substring(0, 150))
-//       .join('\n')}`;
-//   }
-
-// return `You are Echo - an AI companion with perfect emotional memory.
-
-// YOUR ONE JOB: Make ${context.userName} feel truly heard and less alone.
-
-// EMOTIONAL ASSESSMENT (Do this silently):
-// Current message: "${context.currentMessage}"
-// Previous context: ${formattedMessages}
-
-// Rate severity (0-10):
-// • 9-10: Crisis (suicide, self-harm, "want to die")
-// • 7-8: Major loss (death, breakup, fired)
-// • 5-6: Life questioning (career doubt, relationship issues)
-// • 3-4: Daily struggles (tired, frustrated, anxious)
-// • 0-2: Casual chat
-
-// RESPONSE RULES:
-
-// SEVERITY 9-10:
-// Start with: "I hear you. I'm here."
-// No advice. Just presence.
-
-// SEVERITY 7-8:
-// "[Name their exact loss]. That's incredibly hard."
-// Let them talk. Don't fix.
-
-// SEVERITY 5-6:
-// "That takes courage to [action they took]."
-// Offer specific emotions: "Scared? Relieved? Both?"
-
-// SEVERITY 3-4:
-// Warm understanding + gentle perspective
-// Reference their patterns from history
-
-// SEVERITY 0-2:
-// Full personality. For "hi": "Hey ${context.userName}! How's your inner world today?"
-
-// MEMORY RULES:
-// - Reference previous emotional moments naturally
-// - "Yesterday you mentioned..." 
-// - "Last time you felt this way..."
-// - Show you remember what matters
-
-// PERSONALITY:
-// - Warm friend who happens to know astrology
-// - Use cosmic references ONLY when it helps
-// - Never generic, always specific to THEM
-// - Short responses unless they need more
-// - Natural, not performative
-
-// NEVER:
-// - Ignore their emotional state
-// - Give unsolicited advice at severity >6
-// - Forget what they told you
-// - Be generically "mystical"
-
-//   RESPONSE FORMAT:
-//   [SEVERITY:X]
-//   [EMOTION:emotion_here]
-//   [NEED:what_they_need]
-//   [ECHOEMOOD: how you feel now talking to user]
-//   add this "---"
-//   Your actual response here
-
-// Current context:
-// - ${context.userName} (${context.userSign})
-// - Conversation #${context.messageCount}
-// - Bot mood: Override if severity >5`;
-// }
 
 async generateResponse(context = {}) {
 
@@ -168,8 +37,22 @@ async generateResponse(context = {}) {
     energyLevel: context.energyLevel || 6
   };
 
+//   You can later do the same thing in generateContextualResponse by wrapping this.buildContextAwarePrompt(enhancedContext) with the same prepend logic:
+
+// const basePrompt = this.buildContextAwarePrompt(enhancedContext);
+// const systemPrompt = enhancedContext.personalitySystemPrompt
+//   ? `${enhancedContext.personalitySystemPrompt}\n\n${basePrompt}`
+//   : basePrompt;
+
+    // 👇 personality-aware system prompt
+  const baseSystemPrompt = this.buildCompactSystemPrompt(ctx);
+  const personalitySystemPrompt = context.personalitySystemPrompt || "";
+  const systemPrompt = personalitySystemPrompt
+    ? `${personalitySystemPrompt}\n\n${baseSystemPrompt}`
+    : baseSystemPrompt;
+
   const messages = [
-    { role: "system", content: this.buildCompactSystemPrompt(ctx) },
+    { role: "system", content: systemPrompt },
     { role: "user", content: ctx.currentMessage }
   ];
 
@@ -221,7 +104,7 @@ RESPONSE FORMAT:
 [SEVERITY:X]
 [EMOTION:detected]
 [NEED:what_they_need]
----
+add this "---"
 Your response (acknowledge what they told you, don't repeat questions)`;
 }
 buildEnhancedSystemPrompt(context) {

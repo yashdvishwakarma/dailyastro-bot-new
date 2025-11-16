@@ -9,6 +9,7 @@ import SubtextReader from '../intelligence/SubtextReader.js';
 import OpenAIService from '../services/OpenAIService.js';
 import MetricsService from '../services/MetricsService.js';
 import getMemoryManager from '../services/ConversationMemoryManager.js';
+import PersonalityService from "../services/PersonalityService.js";
 
 class ConversationHandler {
   constructor(services = {}) {
@@ -26,6 +27,7 @@ class ConversationHandler {
     this.ai = new OpenAIService();
     this.value = new ValueGenerator(services.astrology, this.memory, this.ai);
       this.memoryManager = getMemoryManager();
+      this.personalityInject = new PersonalityService();
 
     this.db = null;
   }
@@ -64,6 +66,9 @@ class ConversationHandler {
 
       // 3️⃣ Build OpenAI context with ENHANCED MEMORY
 const enhancedMemory = await this.memoryManager.getEnhancedContext(chatId, message);
+const style = user.preferred_conversation_style || "bestie";
+const profile = this.personalityInject.getProfile(style);
+const personalitySystemPrompt = this.personalityInject.getSystemPrompt(style, user);
 
 // const aiContext = {
 //   message,
@@ -96,6 +101,8 @@ const enhancedMemory = await this.memoryManager.getEnhancedContext(chatId, messa
   // Already optimized from memory manager
   recentMessages: enhancedMemory.recentMessages,
   summaries: enhancedMemory.summaries,
+    personalitySystemPrompt,
+  preferredConversationStyle: style
   // Don't send these unless absolutely needed:
   // - semanticMatches (already incorporated in summaries)
   // - IDs, timestamps, metadata (not needed for generation)
