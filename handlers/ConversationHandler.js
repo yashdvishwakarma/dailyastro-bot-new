@@ -46,6 +46,7 @@ class ConversationHandler {
       const db = await this.getDb();
       const messageCount = user.total_messages || 0;
 
+      // console.log("user", user);
       // Metric checks
       if (messageCount === 5) await this.metrics.trackGhosting(user.id, messageCount);
       if (messageCount === 1) await this.metrics.trackResponseToGreeting(user.id, message);

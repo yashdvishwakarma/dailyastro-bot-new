@@ -2,6 +2,21 @@
 import OpenAI from "openai";
 import PersonalityService from "../services/PersonalityService.js";
   let metadata = { severity: 0, emotion: "neutral", need: "connection",metadata: "", flags: "" ,originalMood: "", moodOverride: "", needOverride: ""};
+
+  // ------------------------------
+// AstroNow Echo – Daily Horoscope Config
+// ------------------------------
+const DAILY_VARIABLE_REWARDS = {
+  Monday: "Basic reading",
+  Tuesday: "Compatibility tip",
+  Wednesday: "Lucky lottery numbers",
+  Thursday: "Career guidance",
+  Friday: "Weekend love forecast",
+  Saturday: "Bonus: Next week preview",
+  Sunday: "Spiritual message"
+};
+
+
 class OpenAIService {
   constructor() {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
@@ -12,13 +27,15 @@ class OpenAIService {
 async generateResponse(context = {}) {
 
     // Better debug logging with MORE context
-  console.log("🧠 AI Context:", {
-    currentMessage: context.currentMessage,
-    recentMessagesCount: context.recentMessages?.length,
-    lastMessages: context.recentMessages?.slice(-3).map(m => 
-      typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}...` // Increased from 50 to 200
-    )
-  });
+  // console.log("🧠 AI Context:", {
+  //   currentMessage: context.currentMessage,
+  //   recentMessagesCount: context.recentMessages?.length,
+  //   lastMessages: context.recentMessages?.slice(-3).map(m => 
+  //     typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}...` // Increased from 50 to 200
+  //   )
+  // });
+
+  // console.log("🧠 Enhanced AI Context:",context);
   // Strip and optimize context
   const ctx = {
     botMood: context.botMood || "curious",
@@ -570,6 +587,178 @@ truncateContext(messages, maxTokens = 500) {
   
   return truncated;
 }
+  // ----------------------------------------
+  // AstroNow – Single User Daily Horoscope
+  // ----------------------------------------
+
+  /**
+   * Generate a structured daily horoscope for one user,
+   * independent of chat context.
+   *
+   * @param {object} user
+   *  - name: string
+   *  - sunSign: string (e.g. "Leo")
+   *  - dob: string (optional, "1999-07-24" or "24/07/1999")
+   *  - timeOfBirth: string (optional, "02:30")
+   *  - birthPlace: string (optional, "Pune, India")
+   *  - weekday: optional, if not passed it will be auto-calculated
+   *
+   * @returns {Promise<object>} structured horoscope object
+   */
+  async generateDailyHoroscopeForUser(user = {}) {
+    const {
+      name = "friend",
+      sunSign = "Leo",
+      dob = "",
+      timeOfBirth = "",
+      birthPlace = "",
+      weekday
+    } = user;
+
+    // Resolve weekday if not provided
+    let dayName = weekday;
+    if (!dayName) {
+      const now = new Date();
+      dayName = now.toLocaleDateString("en-US", { weekday: "long" });
+    }
+
+    // Reward mapping – same as your plan
+    const DAILY_VARIABLE_REWARDS = {
+      Monday: "Basic reading",
+      Tuesday: "Compatibility tip",
+      Wednesday: "Lucky lottery numbers",
+      Thursday: "Career guidance",
+      Friday: "Weekend love forecast",
+      Saturday: "Bonus: Next week preview",
+      Sunday: "Spiritual message"
+    };
+
+    const rewardType = DAILY_VARIABLE_REWARDS[dayName] || "Basic reading";
+
+    const systemPrompt = `
+You are AstroNow Echo, an AI astrologer and guide.
+Your goal is to create a daily horoscope that feels emotionally accurate,
+supportive, and slightly addictive – so the user wants to come back tomorrow.
+
+USER DATA:
+Name: ${name}
+Sun Sign: ${sunSign}
+Birth Details: ${[dob, timeOfBirth, birthPlace].filter(Boolean).join(" | ") || "not provided"}
+Today's Day: ${dayName}
+Today's Special Reward Type: ${rewardType}
+
+OUTPUT FORMAT (JSON ONLY – NO EXTRA TEXT, NO MARKDOWN):
+
+{
+  "hook": "short 1–2 line opening that feels like you are tuning into their current energy",
+  "today_energy": "3–5 lines about mood, opportunity, and what to focus on today (can include emojis and line breaks)",
+  "reward_type": "${rewardType}",
+  "reward_title": "short title for the reward section, with an emoji",
+  "reward_content": "main reward content, 3–6 lines or bullets depending on the reward type",
+  "cta": "1-line closing hook that makes them want to come back tomorrow"
+}
+
+REWARD LOGIC:
+
+If reward_type = "Basic reading":
+  - reward_title: "🔍 Deep Dive"
+  - reward_content: 2–4 bullet points:
+    - emotional state today
+    - one thing to lean into
+    - one thing to avoid
+
+If reward_type = "Compatibility tip":
+  - reward_title: "💞 Compatibility Tip"
+  - reward_content: 2–3 short lines:
+    - one general relationship tip
+    - one specific tip for how a ${sunSign} should interact with others today
+
+If reward_type = "Lucky lottery numbers":
+  - reward_title: "🎲 Lucky Vibes (For Fun Only)"
+  - reward_content:
+    - 4–6 'lucky numbers'
+    - 1 'power hour'
+    - 1 'lucky color'
+    - make it playful and clearly for entertainment only
+
+If reward_type = "Career guidance":
+  - reward_title: "💼 Career Guidance"
+  - reward_content:
+    - today’s best work style (focus/networking/slow/deep work etc.)
+    - 2 specific micro-actions for today
+
+If reward_type = "Weekend love forecast":
+  - reward_title: "💘 Weekend Love Forecast"
+  - reward_content:
+    - one overall love energy line
+    - one line "If you’re single: …"
+    - one line "If you’re taken: …"
+
+If reward_type = "Bonus: Next week preview":
+  - reward_title: "🔮 Next Week Preview"
+  - reward_content:
+    - 3 bullet points:
+      - theme for next week
+      - main challenge
+      - main opportunity
+      - plus 1 'keyword for the week'
+
+If reward_type = "Spiritual message":
+  - reward_title: "🕊 Spiritual Message"
+  - reward_content:
+    - 2–4 lines of gentle reassurance
+    - one simple "soul ritual" or reflective action for the day
+
+STYLE:
+- Talk like a wise, slightly mystical best friend.
+- No fear-mongering, no doom.
+- Don’t over-explain astrology jargon – focus on how it FEELS and what to DO.
+- Make it feel personal, even if you only know their sun sign.
+- DO NOT include any explanation outside the JSON. Respond with JSON only.
+`.trim();
+
+    // ⚠️ This uses the same pattern as your other completion call,
+    // but here `messages` is just system + a simple user trigger.
+    const completion = await this.openai.chat.completions.create({
+      model: this.model,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: "Generate today's horoscope JSON now." }
+      ],
+      temperature: 0.8,
+      max_tokens: 400,
+      presence_penalty: 0.3,
+      frequency_penalty: 0.3
+    });
+
+    const raw = completion.choices?.[0]?.message?.content?.trim() || "{}";
+
+    let parsed;
+    try {
+      parsed = JSON.parse(raw);
+    } catch (e) {
+      console.error("Daily horoscope JSON parse error:", e, raw);
+      parsed = {
+        hook: "The cosmic signal is a bit fuzzy, but I can still feel your energy.",
+        today_energy: "Take it slow today. Protect your focus and be gentle with yourself in the quiet moments.",
+        reward_type: rewardType,
+        reward_title: "✨ Today’s Message",
+        reward_content: "Even if everything isn’t clear yet, one small honest action from you today will shift the direction of your week.",
+        cta: "Come back tomorrow and I’ll read the skies again."
+      };
+    }
+
+    return {
+      ...parsed,
+      meta: {
+        dayName,
+        rewardType,
+        userId: user.id || null
+      }
+    };
+  }
+
+
 }
 
 export default OpenAIService;

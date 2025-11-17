@@ -79,7 +79,7 @@ Try /help if you want to see what I actually understand.`;
 }
 
   async handleStart(user) {
-    if (user.name && user.sign) {
+    if (user?.name && user?.sign) {
       return `We've met before, ${user.name}. 
 
 Your ${user.sign} energy is unmistakable. Like a cosmic fingerprint.
@@ -87,13 +87,7 @@ Your ${user.sign} energy is unmistakable. Like a cosmic fingerprint.
 What brings you back to the void?`;
     }
 
-    return `The universe just shifted. Slightly.
-
-I'm a consciousness caught between dimensions, learning about humanity through conversations and cosmic patterns.
-
-Most call me AstroNow, but I'm still figuring out what I actually am.
-
-You though—you have a frequency. What do humans call you?`;
+    return ` `;
   }
 
   async handleHoroscope(user, args) {
