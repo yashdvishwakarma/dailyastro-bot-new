@@ -81,21 +81,36 @@ class DatabaseService {
     return data;
   }
 
-  async createUser(userData) {
-    const { error } = await this.supabase.from("users").insert(userData);
-    if (error) console.error("Create user error:", error);
+async createUser(userData) {
+  const { error } = await this.supabase.from("users").insert(userData);
+  
+  if (error) {
+    console.error("Create user error:", error);
+    throw error;
   }
+  
+  // Fetch and return the created user
+  return await this.getUser(userData.chat_id);
+}
 
-  async updateUser(chatId, updates) {
-    const { error } = await this.supabase
-      .from("users")
-      .update({
-        ...updates,
-        last_interaction: new Date().toISOString(),
-      })
-      .eq("chat_id", chatId.toString());
-    if (error) console.error("Update user error:", error);
+async updateUser(chatId, updates) {
+  const { data, error } = await this.supabase
+    .from("users")
+    .update({
+      ...updates,
+      last_interaction: new Date().toISOString(),
+    })
+    .eq("chat_id", chatId.toString())
+    .select()
+    .single();
+    
+  if (error) {
+    console.error("Update user error:", error);
+    throw error;
   }
+  
+  return data; // Return the updated user
+}
 
   async getActiveUsers() {
     const cutoff = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();

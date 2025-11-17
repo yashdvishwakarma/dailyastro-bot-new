@@ -26,6 +26,7 @@ import AstrologyEngine from "./intelligence/AstrologyEngine.js";
 // Utils
 import { enqueueMessage } from "./utils/TelegramQueue.js";
 import CleanupService from './services/CleanupService.js';
+import PersonalityService from "./services/PersonalityService.js";
 
 
 class AstroNowBot {
@@ -43,6 +44,7 @@ class AstroNowBot {
     // Initialize core services
     this.ai = new OpenAIService();
     this.astrology = new AstrologyEngine();
+    this.personalityService = new PersonalityService();
     this.personality = new PersonalityEngine();
     this.dynamics = new ConversationDynamics();
     this.memory = new MemoryWeaver(this.db);
@@ -62,6 +64,7 @@ class AstroNowBot {
       personality: this.personality,
       dynamics: this.dynamics,
       memory: this.memory,
+      personalityService :this.personalityService
     };
 
     // Handlers
@@ -193,11 +196,10 @@ class AstroNowBot {
 
       const session = this.activeConversations.get(chatId);
       session.messageCount++;
-
       let response;
-      if (messageText.startsWith("/")) {
+      if (messageText.startsWith("/") && user?.name) {
         response = await this.commandHandler.handle(messageText, user);
-      } else if (user.stage === "new" || !user.name || !user.birth_date) {
+      } else if (user.stage === "new" || !user.name || !user.birth_date || !user.birth_time) {
         response = await this.onboardingHandler.handle(messageText, user);
       } else {
         response = await this.conversationHandler.handleMessage(
