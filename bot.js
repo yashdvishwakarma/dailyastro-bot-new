@@ -163,7 +163,17 @@ class AstroNowBot {
       "*/30 * * * *",
       async () => await this.checkForSelfMessages()
     );
+       // 🧠 Daily insights (analytics)
     cron.schedule("0 9 * * *", async () => await this.generateDailyInsights());
+
+    // ✨ Daily horoscopes at 9 AM
+    cron.schedule("0 9 * * *", async () => {
+      try {
+        await this.sendDailyHoroscopes();
+      } catch (err) {
+        console.error("💥 Error in sendDailyHoroscopes cron:", err);
+      }
+    });
 
     // Daily cleanup at 3 AM
     cron.schedule("0 3 * * *", async () => {
@@ -390,6 +400,7 @@ class AstroNowBot {
       );
     } else {
       this.bot.startPolling();
+      // await this.sendDailyHoroscopes();
     }
     //this.getDailyReport();
   }
@@ -417,6 +428,78 @@ Engagement Rate: ${Math.round(
     `;
   }
   }
+
+
+    async sendDailyHoroscopes() {
+    console.log("✨ Running sendDailyHoroscopes job...");
+
+    const users = await this.db.getAllUsers();
+    const now = new Date();
+    const dateStr = now.toISOString().slice(0, 10); // YYYY-MM-DD
+    const weekday = now.toLocaleDateString("en-US", { weekday: "long" });
+
+    for (const user of users) {
+      try {
+        // Only send to users who finished onboarding and have astro data
+        if (
+          user.stage === "new" ||
+          !user.name ||
+          !user.sign ||
+          !user.birth_date ||
+          !user.birth_time
+        ) {
+          continue;
+        }
+
+        const horoscope = await this.ai.generateDailyHoroscopeForUser({
+          id: user.id,
+          name: user.name,
+          sign: user.sign,
+          birth_date: user.birth_date,
+          birth_time: user.birth_time,
+          birth_place: user.birth_place || "",
+          weekday
+        });
+
+        const text = [
+          `<b>${horoscope.hook}</b>`,
+          "",
+          `🌞 <b>Today's Energy</b>`,
+          horoscope.today_energy,
+          "",
+          `${horoscope.reward_title}`,
+          horoscope.reward_content,
+          "",
+          `${horoscope.cta}`
+        ].join("\n");
+
+        await enqueueMessage(
+          this.bot,
+          "sendMessage",
+          user.chat_id,
+          text,
+          { parse_mode: "HTML" }
+        );
+
+        // Optional: if you later add DB storage, you can use:
+        if (this.db.storeDailyHoroscope) {
+          await this.db.storeDailyHoroscope({
+            chat_id: user.chat_id,
+            date: dateStr,
+            payload: horoscope
+          });
+        }
+
+        console.log(`✅ Sent daily horoscope to ${user.chat_id} (${user.name})`);
+      } catch (err) {
+        console.error(
+          `❌ Failed to send daily horoscope to ${user.chat_id}:`,
+          err.message
+        );
+      }
+    }
+  }
+
 
   sleep(ms) {
     return new Promise((resolve) => setTimeout(resolve, ms));
