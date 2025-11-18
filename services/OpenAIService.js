@@ -607,11 +607,11 @@ truncateContext(messages, maxTokens = 500) {
    */
   async generateDailyHoroscopeForUser(user = {}) {
     const {
-      name = "friend",
-      sunSign = "Leo",
-      dob = "",
-      timeOfBirth = "",
-      birthPlace = "",
+      name = user.name || "Friend",
+      sunSign = user.sign || "Leo",
+      dob = user.birth_date || "",
+      timeOfBirth = user.birth_time || "",
+      birthPlace = user.birth_location || "India",
       weekday
     } = user;
 
