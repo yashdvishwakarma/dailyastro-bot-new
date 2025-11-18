@@ -81,6 +81,20 @@ class DatabaseService {
     return data;
   }
 
+    async getAllUsers() {
+    const { data, error } = await this.supabase
+      .from("users")
+      .select("*");   // 👈 fetch all columns
+
+    if (error) {
+      console.error("Get all users error:", error);
+      return [];
+    }
+
+    return data || [];
+  }
+
+
 async createUser(userData) {
   const { error } = await this.supabase.from("users").insert(userData);
   
