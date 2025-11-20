@@ -26,8 +26,8 @@ class ConversationHandler {
     this.metrics = new MetricsService(this.dbPromise);
     this.ai = new OpenAIService();
     this.value = new ValueGenerator(services.astrology, this.memory, this.ai);
-      this.memoryManager = getMemoryManager();
-      this.personalityInject = new PersonalityService();
+    this.memoryManager = getMemoryManager();
+    this.personalityInject = new PersonalityService();
 
     this.db = null;
   }
@@ -66,49 +66,64 @@ class ConversationHandler {
       const botMood = await this.personality.determineMood(analysis.context);
 
       // 3️⃣ Build OpenAI context with ENHANCED MEMORY
-const enhancedMemory = await this.memoryManager.getEnhancedContext(chatId, message);
-const style = user.preferred_conversation_style || "bestie";
-const profile = this.personalityInject.getProfile(style);
-const personalitySystemPrompt = this.personalityInject.getSystemPrompt(style, user);
+      const enhancedMemory = await this.memoryManager.getEnhancedContext(chatId, message);
+      const style = user.preferred_conversation_style || "bestie";
+      const profile = this.personalityInject.getProfile(style);
+      const personalitySystemPrompt = this.personalityInject.getSystemPrompt(style, user);
 
-// const aiContext = {
-//   message,
-//   currentMessage: message,
-//   userSign: user.sign,
-//   userName: user.name,
-//   element: user.element,
-//   botMood,
-//   messageCount,
-//   energyLevel: this.personality.energyLevel,
-//   recentMessages: enhancedMemory.recentMessages || await db.getRecentMessages(chatId, 5),
-//   summaries: enhancedMemory.summaries,  // NEW: Historical summaries
-//   semanticMatches: enhancedMemory.semanticMatches,  // NEW: Relevant past context
-//   threadDepth: analysis.context.threadDepth || 0,
-//   detectedNeed: analysis.intent.need,
-//   threadEmotion: analysis.subtext.emotion
-// };
+      // const aiContext = {
+      //   message,
+      //   currentMessage: message,
+      //   userSign: user.sign,
+      //   userName: user.name,
+      //   element: user.element,
+      //   botMood,
+      //   messageCount,
+      //   energyLevel: this.personality.energyLevel,
+      //   recentMessages: enhancedMemory.recentMessages || await db.getRecentMessages(chatId, 5),
+      //   summaries: enhancedMemory.summaries,  // NEW: Historical summaries
+      //   semanticMatches: enhancedMemory.semanticMatches,  // NEW: Relevant past context
+      //   threadDepth: analysis.context.threadDepth || 0,
+      //   detectedNeed: analysis.intent.need,
+      //   threadEmotion: analysis.subtext.emotion
+      // };
       // console.log(`[AI] Mood=${botMood} | Sign=${user.sign}`);
 
-      // 4️⃣ Generate response
-      
+      // 4️⃣ Check for horoscope request
+      const horoscopeKeywords = ['horoscope', 'daily reading', 'what do the stars say', 'cosmic forecast', 'astrology today'];
+      const isHoroscopeRequest = horoscopeKeywords.some(keyword => message.toLowerCase().includes(keyword));
+
+      if (isHoroscopeRequest && user.sign) {
+        console.log(`[Horoscope Request] Generating contextual horoscope for ${user.name}`);
+        const horoscopeResponse = await this.ai.generateContextualHoroscope(
+          user,
+          enhancedMemory.recentMessages || [],
+          enhancedMemory.summaries || []
+        );
+        await this.storeAndLearn(message, horoscopeResponse, analysis, user);
+        return horoscopeResponse;
+      }
+
+      // 5️⃣ Generate response
+
       const aiContext = {
-  message: message,
-  currentMessage: message,
-  userSign: user.sign,
-  userName: user.name,
-  botMood,
-  messageCount,
-  energyLevel: this.personality.energyLevel,
-  // Already optimized from memory manager
-  recentMessages: enhancedMemory.recentMessages,
-  summaries: enhancedMemory.summaries,
-    personalitySystemPrompt,
-  preferredConversationStyle: style
-  // Don't send these unless absolutely needed:
-  // - semanticMatches (already incorporated in summaries)
-  // - IDs, timestamps, metadata (not needed for generation)
-  // - threadDepth, detectedNeed (let AI figure it out)
-};
+        message: message,
+        currentMessage: message,
+        userSign: user.sign,
+        userName: user.name,
+        botMood,
+        messageCount,
+        energyLevel: this.personality.energyLevel,
+        // Already optimized from memory manager
+        recentMessages: enhancedMemory.recentMessages,
+        summaries: enhancedMemory.summaries,
+        personalitySystemPrompt,
+        preferredConversationStyle: style
+        // Don't send these unless absolutely needed:
+        // - semanticMatches (already incorporated in summaries)
+        // - IDs, timestamps, metadata (not needed for generation)
+        // - threadDepth, detectedNeed (let AI figure it out)
+      };
       const aiResponse = await this.ai.generateResponse(aiContext);
       console.log(`[AI Response]`, aiResponse);
       // 5️⃣ Process AI response
@@ -144,7 +159,7 @@ const personalitySystemPrompt = this.personalityInject.getSystemPrompt(style, us
       // }
 
       // 7️⃣ Learn + store
-              // console.log(`[Greeting yeahh] ${message} also the user data`,user);
+      // console.log(`[Greeting yeahh] ${message} also the user data`,user);
       await this.storeAndLearn(message, finalResponse, analysis, user);
 
       return finalResponse;
@@ -256,26 +271,26 @@ const personalitySystemPrompt = this.personalityInject.getSystemPrompt(style, us
   // ───────────────────────────────────────────────
   // 🧍 STORAGE & MEMORY
   // ───────────────────────────────────────────────
-async storeAndLearn(userMessage, botResponse, analysis, user) {
-  try {
-    const db = await this.getDb();
-    
-    // Store messages as before
-    await db.storeMessage(user.chat_id, 'user', userMessage);
-    await db.storeMessage(user.chat_id, 'bot', botResponse);
+  async storeAndLearn(userMessage, botResponse, analysis, user) {
+    try {
+      const db = await this.getDb();
 
-    // Process memory if analysis exists
-    if (analysis) {
-      await this.memory.process(userMessage, botResponse, analysis);
+      // Store messages as before
+      await db.storeMessage(user.chat_id, 'user', userMessage);
+      await db.storeMessage(user.chat_id, 'bot', botResponse);
+
+      // Process memory if analysis exists
+      if (analysis) {
+        await this.memory.process(userMessage, botResponse, analysis);
+      }
+
+      // NEW: Trigger async summarization check
+      this.memoryManager.checkAndTriggerSummarization(user.chat_id);
+
+    } catch (error) {
+      console.error('Error in storeAndLearn:', error);
     }
-
-    // NEW: Trigger async summarization check
-    this.memoryManager.checkAndTriggerSummarization(user.chat_id);
-    
-  } catch (error) {
-    console.error('Error in storeAndLearn:', error);
   }
-}
   // ───────────────────────────────────────────────
   // 🎭 HUMANIZATION
   // ───────────────────────────────────────────────
