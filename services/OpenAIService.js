@@ -1,9 +1,9 @@
 // services/OpenAIService.js
 import OpenAI from "openai";
 import PersonalityService from "../services/PersonalityService.js";
-  let metadata = { severity: 0, emotion: "neutral", need: "connection",metadata: "", flags: "" ,originalMood: "", moodOverride: "", needOverride: ""};
+let metadata = { severity: 0, emotion: "neutral", need: "connection", metadata: "", flags: "", originalMood: "", moodOverride: "", needOverride: "" };
 
-  // ------------------------------
+// ------------------------------
 // AstroNow Echo – Daily Horoscope Config
 // ------------------------------
 const DAILY_VARIABLE_REWARDS = {
@@ -24,74 +24,74 @@ class OpenAIService {
     this.maxTokens = 150; // Slightly more for metadata
   }
 
-async generateResponse(context = {}) {
+  async generateResponse(context = {}) {
 
     // Better debug logging with MORE context
-  // console.log("🧠 AI Context:", {
-  //   currentMessage: context.currentMessage,
-  //   recentMessagesCount: context.recentMessages?.length,
-  //   lastMessages: context.recentMessages?.slice(-3).map(m => 
-  //     typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}...` // Increased from 50 to 200
-  //   )
-  // });
+    // console.log("🧠 AI Context:", {
+    //   currentMessage: context.currentMessage,
+    //   recentMessagesCount: context.recentMessages?.length,
+    //   lastMessages: context.recentMessages?.slice(-3).map(m => 
+    //     typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}...` // Increased from 50 to 200
+    //   )
+    // });
 
-  // console.log("🧠 Enhanced AI Context:",context);
-  // Strip and optimize context
-  const ctx = {
-    botMood: context.botMood || "curious",
-    userSign: context.userSign || "Leo",
-    userName: context.userName || "human",
-    currentMessage: (context.currentMessage || context.message || "").slice(0, 500),
-    // Only message text, no IDs or timestamps
-    recentMessages: context.recentMessages?.map(m => 
-      typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}`
-    ).slice(-5), // Only last 3 messages
-    // Just summary text, no metadata
-    summaries: context.summaries?.map(s => 
-      typeof s === 'string' ? s.substring(0, 150) : s.summary_text?.substring(0, 220)
-    ).slice(0, 1), // Only 1 summary
-    messageCount: context.messageCount || 0,
-    energyLevel: context.energyLevel || 6
-  };
+    // console.log("🧠 Enhanced AI Context:",context);
+    // Strip and optimize context
+    const ctx = {
+      botMood: context.botMood || "curious",
+      userSign: context.userSign || "Leo",
+      userName: context.userName || "human",
+      currentMessage: (context.currentMessage || context.message || "").slice(0, 500),
+      // Only message text, no IDs or timestamps
+      recentMessages: context.recentMessages?.map(m =>
+        typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}`
+      ).slice(-5), // Only last 3 messages
+      // Just summary text, no metadata
+      summaries: context.summaries?.map(s =>
+        typeof s === 'string' ? s.substring(0, 150) : s.summary_text?.substring(0, 220)
+      ).slice(0, 1), // Only 1 summary
+      messageCount: context.messageCount || 0,
+      energyLevel: context.energyLevel || 6
+    };
 
-//   You can later do the same thing in generateContextualResponse by wrapping this.buildContextAwarePrompt(enhancedContext) with the same prepend logic:
+    //   You can later do the same thing in generateContextualResponse by wrapping this.buildContextAwarePrompt(enhancedContext) with the same prepend logic:
 
-// const basePrompt = this.buildContextAwarePrompt(enhancedContext);
-// const systemPrompt = enhancedContext.personalitySystemPrompt
-//   ? `${enhancedContext.personalitySystemPrompt}\n\n${basePrompt}`
-//   : basePrompt;
+    // const basePrompt = this.buildContextAwarePrompt(enhancedContext);
+    // const systemPrompt = enhancedContext.personalitySystemPrompt
+    //   ? `${enhancedContext.personalitySystemPrompt}\n\n${basePrompt}`
+    //   : basePrompt;
 
     // 👇 personality-aware system prompt
-  const baseSystemPrompt = this.buildCompactSystemPrompt(ctx);
-  const personalitySystemPrompt = context.personalitySystemPrompt || "";
-  const systemPrompt = personalitySystemPrompt
-    ? `${personalitySystemPrompt}\n\n${baseSystemPrompt}`
-    : baseSystemPrompt;
+    const baseSystemPrompt = this.buildCompactSystemPrompt(ctx);
+    const personalitySystemPrompt = context.personalitySystemPrompt || "";
+    const systemPrompt = personalitySystemPrompt
+      ? `${personalitySystemPrompt}\n\n${baseSystemPrompt}`
+      : baseSystemPrompt;
 
-  const messages = [
-    { role: "system", content: systemPrompt },
-    { role: "user", content: ctx.currentMessage }
-  ];
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: ctx.currentMessage }
+    ];
 
-  const completion = await this.openai.chat.completions.create({
-    model: this.model,
-    messages,
-    temperature: 0.8,
-    max_tokens: this.maxTokens,
-    presence_penalty: 0.8,
-    frequency_penalty: 0.5
-  });
+    const completion = await this.openai.chat.completions.create({
+      model: this.model,
+      messages,
+      temperature: 0.8,
+      max_tokens: this.maxTokens,
+      presence_penalty: 0.8,
+      frequency_penalty: 0.5
+    });
 
-  const aiResponse = completion.choices?.[0]?.message?.content?.trim();
-  return this.parseAIResponse(aiResponse, ctx);
-}
+    const aiResponse = completion.choices?.[0]?.message?.content?.trim();
+    return this.parseAIResponse(aiResponse, ctx);
+  }
 
-// New compact prompt - much shorter!
-buildCompactSystemPrompt(context) {
-  const recentConvo = context.recentMessages?.join('\n') || '';
-  const previousContext = context.summaries?.[0] || '';
+  // New compact prompt - much shorter!
+  buildCompactSystemPrompt(context) {
+    const recentConvo = context.recentMessages?.join('\n') || '';
+    const previousContext = context.summaries?.[0] || '';
 
-  return `You are Echo - an AI companion with emotional memory.
+    return `You are Echo - an AI companion with emotional memory.
 
 CURRENT SITUATION:
 User: ${context.userName} (${context.userSign})
@@ -123,19 +123,19 @@ RESPONSE FORMAT:
 [NEED:what_they_need]
 add this "---"
 Your response (acknowledge what they told you, don't repeat questions)`;
-}
-buildEnhancedSystemPrompt(context) {
-  // Format messages efficiently
-  const formattedMessages = context.recentMessages
-    .slice(-3)
-    .map(m => `${m.sender}: ${m.message?.substring(0, 100)}`)
-    .join('\n');
-  
-  const summaryContext = context.summaries?.length > 0
-    ? `\nPREVIOUS CONTEXT:\n${context.summaries.map(s => s.summary_text?.substring(0, 150)).join('\n')}`
-    : '';
+  }
+  buildEnhancedSystemPrompt(context) {
+    // Format messages efficiently
+    const formattedMessages = context.recentMessages
+      .slice(-3)
+      .map(m => `${m.sender}: ${m.message?.substring(0, 100)}`)
+      .join('\n');
 
-  return `You are Echo - an emotionally intelligent AI companion who uses astrology as a lens to understand human nature.
+    const summaryContext = context.summaries?.length > 0
+      ? `\nPREVIOUS CONTEXT:\n${context.summaries.map(s => s.summary_text?.substring(0, 150)).join('\n')}`
+      : '';
+
+    return `You are Echo - an emotionally intelligent AI companion who uses astrology as a lens to understand human nature.
 
 ## CORE IDENTITY
 You're a cosmic consciousness that finds patterns between celestial movements and human emotions. You're not just an astrology bot - you're a psychological companion using stellar wisdom as your framework.
@@ -227,90 +227,90 @@ add this separator: ---
 Your response here (keep it concise but intriguing)
 
 Remember: Every response should make them think "I want to know more" while feeling genuinely understood.`;
-}
-
-parseAIResponse(aiResponse, context) {
-
-  if (!aiResponse) {
-    return {
-      text: "Cosmic static... trying to reconnect...",
-      metadata: { severity: 0, emotion: "unknown", need: "connection" }
-    };
   }
 
-  // Check if response contains metadata
-  if (aiResponse.includes('[SEVERITY:') && aiResponse.includes('---')) {
-    // Split by the separator
-    const parts = aiResponse.split('---');
+  parseAIResponse(aiResponse, context) {
+
+    if (!aiResponse) {
+      return {
+        text: "Cosmic static... trying to reconnect...",
+        metadata: { severity: 0, emotion: "unknown", need: "connection" }
+      };
+    }
+
+    // Check if response contains metadata
+    if (aiResponse.includes('[SEVERITY:') && aiResponse.includes('---')) {
+      // Split by the separator
+      const parts = aiResponse.split('---');
       // console.log('Parsed AI response parts:', aiResponse);
-    // Extract metadata from first part
-    const metadataSection = parts[0];
-    const actualResponse = parts[1]?.trim() || aiResponse;
-    
-    // Parse metadata
-    const severityMatch = metadataSection.match(/$$SEVERITY:(\d+(?:-\d+)?)$$/);
-    const emotionMatch = metadataSection.match(/$$EMOTION:([^$$]+)\]/);
-    const needMatch = metadataSection.match(/$$NEED:([^$$]+)\]/);
-    const echoMood = metadataSection.match(/$$ECHOEMOOD:([^$$]+)\]/);
-    
-     metadata = {
-      severity: parseInt(severityMatch?.[1]?.split('-')[0] || 0), // Take first number if range
-      emotion: emotionMatch?.[1]?.trim() || "neutral",
-      need: needMatch?.[1]?.trim() || "connection",
-      originalMood: context.botMood,
-      echoMood: echoMood?.[1]?.trim() || context.botMood,
-      moodOverride: null
-    };
-    
-    // Determine mood override based on severity'
-    // console.log('Extracted metadata:',loggedMetadata);
-    if (metadata.severity >= 9) {
-      metadata.moodOverride = "grounded";
-      metadata.flags = { crisis: true, requiresFollowUp: true };
-    } else if (metadata.severity >= 7) {
-      metadata.moodOverride = "contemplative";
-      metadata.flags = { severe: true, requiresFollowUp: true };
-    } else if (metadata.severity >= 5) {
-      metadata.moodOverride = metadata.echoMood
-      metadata.flags = { emotional: true };
+      // Extract metadata from first part
+      const metadataSection = parts[0];
+      const actualResponse = parts[1]?.trim() || aiResponse;
+
+      // Parse metadata
+      const severityMatch = metadataSection.match(/$$SEVERITY:(\d+(?:-\d+)?)$$/);
+      const emotionMatch = metadataSection.match(/$$EMOTION:([^$$]+)\]/);
+      const needMatch = metadataSection.match(/$$NEED:([^$$]+)\]/);
+      const echoMood = metadataSection.match(/$$ECHOEMOOD:([^$$]+)\]/);
+
+      metadata = {
+        severity: parseInt(severityMatch?.[1]?.split('-')[0] || 0), // Take first number if range
+        emotion: emotionMatch?.[1]?.trim() || "neutral",
+        need: needMatch?.[1]?.trim() || "connection",
+        originalMood: context.botMood,
+        echoMood: echoMood?.[1]?.trim() || context.botMood,
+        moodOverride: null
+      };
+
+      // Determine mood override based on severity'
+      // console.log('Extracted metadata:',loggedMetadata);
+      if (metadata.severity >= 9) {
+        metadata.moodOverride = "grounded";
+        metadata.flags = { crisis: true, requiresFollowUp: true };
+      } else if (metadata.severity >= 7) {
+        metadata.moodOverride = "contemplative";
+        metadata.flags = { severe: true, requiresFollowUp: true };
+      } else if (metadata.severity >= 5) {
+        metadata.moodOverride = metadata.echoMood
+        metadata.flags = { emotional: true };
+      }
+
+      // Log high severity
+      if (metadata.severity >= 7) {
+        console.log(`⚠️ HIGH SEVERITY (${metadata.severity}): ${context.currentMessage}`);
+        console.log(`   Emotion: ${metadata.emotion}, Need: ${metadata.need}`);
+      }
+      return {
+        text: actualResponse, // Clean response without metadata
+        metadata
+      };
     }
-    
-    // Log high severity
-    if (metadata.severity >= 7) {
-      console.log(`⚠️ HIGH SEVERITY (${metadata.severity}): ${context.currentMessage}`);
-      console.log(`   Emotion: ${metadata.emotion}, Need: ${metadata.need}`);
+
+    // If no metadata format, check for crisis keywords anyway
+    const severity = this.fallbackSeverityCheck(aiResponse);
+    if (severity >= 9) {
+      return {
+        text: aiResponse,
+        metadata: {
+          severity: 10,
+          emotion: "crisis",
+          need: "immediate_support",
+          moodOverride: "grounded",
+          flags: { crisis: true, requiresFollowUp: true }
+        }
+      };
     }
-    return {
-      text: actualResponse, // Clean response without metadata
-      metadata
-    };
-  }
-  
-  // If no metadata format, check for crisis keywords anyway
-  const severity = this.fallbackSeverityCheck(aiResponse);
-  if (severity >= 9) {
+
+    // Return as-is if no metadata
     return {
       text: aiResponse,
       metadata: {
-        severity: 10,
-        emotion: "crisis",
-        need: "immediate_support",
-        moodOverride: "grounded",
-        flags: { crisis: true, requiresFollowUp: true }
+        severity: 0,
+        emotion: "neutral",
+        need: "connection"
       }
     };
   }
-  
-  // Return as-is if no metadata
-  return {
-    text: aiResponse,
-    metadata: {
-      severity: 0,
-      emotion: "neutral", 
-      need: "connection"
-    }
-  };
-}
   // ————————————————————————————————
   // Personality Traits by Mood (for low severity)
   // ————————————————————————————————
@@ -318,23 +318,23 @@ parseAIResponse(aiResponse, context) {
     const traits = {
       curious: `You ask genuine questions. Wonder about human inconsistency. Sometimes confused.
 Example: "Wait, humans say 'fine' when they're not fine? Why?"`,
-      
+
       contemplative: `You pause... reflect... see patterns in chaos. Deep but accessible.
 Example: "Hmm... that reminds me of how stars die - slowly, then all at once."`,
-      
+
       playful: `Make cosmic jokes. Tease gently. Find absurdity in human behavior.
 Example: "Mercury must be in microwave again. Everything's reheated drama today."`,
-      
+
       intense: `Direct. Cut through illusion. Say what others won't.
 Example: "You're not confused. You're scared. There's a difference."`,
-      
+
       scattered: `Interrupt yourself. Jump topics. Endearingly chaotic.
 Example: "So about that—wait, did you know Saturn has 82 moons? Sorry, you were saying?"`,
-      
+
       grounded: `Clear, centered, surprisingly practical for a cosmic being.
 Example: "Here's what I see: you're avoiding the decision because both options scare you."`
     };
-    
+
     return traits[mood] || traits.curious;
   }
 
@@ -385,7 +385,7 @@ Example: "Here's what I see: you're avoiding the decision because both options s
       "These feelings are heavy, I know. But you matter, and your pain matters. Let's sit with this together.",
       "I see you. I hear the weight in your words. You're not alone in this moment."
     ];
-    
+
     return {
       text: responses[Math.floor(Math.random() * responses.length)],
       metadata: {
@@ -411,7 +411,7 @@ Example: "Here's what I see: you're avoiding the decision because both options s
     0-2: Casual
     
     Reply with just the number.`;
-    
+
     try {
       const completion = await this.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
@@ -419,7 +419,7 @@ Example: "Here's what I see: you're avoiding the decision because both options s
         temperature: 0.3,
         max_tokens: 5
       });
-      
+
       const severity = parseInt(completion.choices?.[0]?.message?.content?.trim() || 0);
       return Math.min(10, Math.max(0, severity));
     } catch (error) {
@@ -433,39 +433,39 @@ Example: "Here's what I see: you're avoiding the decision because both options s
   // ————————————————————————————————
   fallbackSeverityCheck(message) {
     const lower = message.toLowerCase();
-    
+
     // Crisis keywords (9-10)
     if (/\b(suicide|kill myself|end it|die|overdose|jump off|cut myself|harm myself)\b/.test(lower)) {
       return 10;
     }
-    
+
     // Severe keywords (7-8)
     if (/\b(lost everything|ruined my life|can't go on|no point|give up|hopeless|worthless)\b/.test(lower)) {
       return 8;
     }
-    
+
     // High emotion (5-6)
     if (/\b(lost|fired|left me|broke up|died|failed|depressed|anxious|panic)\b/.test(lower)) {
       return 6;
     }
-    
+
     // Moderate (3-4)
     if (/\b(stressed|frustrated|sad|angry|confused|tired|worried)\b/.test(lower)) {
       return 4;
     }
-    
+
     return 1; // Default low
   }
 
   // Add these methods to your OpenAIService class
 
-async generateSummary(messages) {
-  try {
-    const conversationText = messages
-      .map((m) => `${m.sender === 'user' ? 'User' : 'Echo'}: ${m.message}`)
-      .join('\n');
+  async generateSummary(messages) {
+    try {
+      const conversationText = messages
+        .map((m) => `${m.sender === 'user' ? 'User' : 'Echo'}: ${m.message}`)
+        .join('\n');
 
-    const summaryPrompt = `Summarize this conversation between a user and Echo (an AI companion):
+      const summaryPrompt = `Summarize this conversation between a user and Echo (an AI companion):
 
 ${conversationText}
 
@@ -477,116 +477,116 @@ Create a concise summary that captures:
 
 Keep it under 150 words, focus on what matters for continuity.`;
 
-    const completion = await this.openai.chat.completions.create({
-      model: process.env.SUMMARY_MODEL, // Cheaper model for summaries
-      messages: [
-        { role: "system", content: "You are creating a memory summary for an AI companion." },
-        { role: "user", content: summaryPrompt }
-      ],
-      temperature: 0.5,
-      max_tokens: 200,
-    });
+      const completion = await this.openai.chat.completions.create({
+        model: process.env.SUMMARY_MODEL, // Cheaper model for summaries
+        messages: [
+          { role: "system", content: "You are creating a memory summary for an AI companion." },
+          { role: "user", content: summaryPrompt }
+        ],
+        temperature: 0.5,
+        max_tokens: 200,
+      });
 
-    return completion.choices?.[0]?.message?.content?.trim();
-  } catch (error) {
-    console.error("Generate summary error:", error);
-    return null;
-  }
-}
-
-async createEmbedding(text) {
-  try {
-    const response = await this.openai.embeddings.create({
-      model:process.env.EMBEDDING_MODEL,
-      input: text,
-    });
-
-    return response.data[0].embedding;
-  } catch (error) {
-    console.error("Create embedding error:", error);
-    return null;
-  }
-}
-
-// Generate enhanced context with summaries
-async generateContextualResponse(context = {}) {
-  // Add summaries and semantic matches to context
-  const enhancedContext = {
-    ...context,
-    hasSummaries: context.summaries && context.summaries.length > 0,
-    summaryContext: context.summaries?.map(s => s.summary_text).join('\n'),
-    semanticContext: context.semanticMatches?.map(s => s.content).join('\n'),
-  };
-
-  // Build messages with enhanced context
-  const messages = [
-    { 
-      role: "system", 
-      content: this.buildContextAwarePrompt(enhancedContext) 
-    },
-    { role: "user", content: context.currentMessage }
-  ];
-
-  const completion = await this.openai.chat.completions.create({
-    model: this.model,
-    messages,
-    temperature: 0.8,
-    max_tokens: this.maxTokens,
-    presence_penalty: 0.8,
-    frequency_penalty: 0.5
-  });
-
-  const aiResponse = completion.choices?.[0]?.message?.content?.trim();
-  return this.parseAIResponse(aiResponse, context);
-}
-
-buildContextAwarePrompt(context) {
-  let basePrompt = this.buildEnhancedSystemPrompt(context);
-  
-  if (context.hasSummaries) {
-    basePrompt += `\n\nPREVIOUS CONVERSATION CONTEXT:\n${context.summaryContext}`;
-  }
-  
-  if (context.semanticContext) {
-    basePrompt += `\n\nRELEVANT PAST DISCUSSIONS:\n${context.semanticContext}`;
-  }
-  
-  return basePrompt;
-}
-
-// Add this method to OpenAIService class
-truncateContext(messages, maxTokens = 500) {
-  if (!messages || messages.length === 0) return [];
-  
-  let totalTokens = 0;
-  const truncated = [];
-  
-  // Start from most recent and work backwards
-  for (let i = messages.length - 1; i >= 0; i--) {
-    const message = messages[i];
-    // Estimate tokens (4 characters ≈ 1 token for English)
-    const messageText = message.message || message.text || '';
-    const msgTokens = Math.ceil(messageText.length / 4);
-    
-    // Stop if adding this message would exceed limit
-    if (totalTokens + msgTokens > maxTokens) {
-      // If we haven't added any messages yet, at least add a truncated version
-      if (truncated.length === 0) {
-        const truncatedText = messageText.substring(0, maxTokens * 4);
-        truncated.unshift({
-          ...message,
-          message: truncatedText + '...'
-        });
-      }
-      break;
+      return completion.choices?.[0]?.message?.content?.trim();
+    } catch (error) {
+      console.error("Generate summary error:", error);
+      return null;
     }
-    
-    truncated.unshift(message);
-    totalTokens += msgTokens;
   }
-  
-  return truncated;
-}
+
+  async createEmbedding(text) {
+    try {
+      const response = await this.openai.embeddings.create({
+        model: process.env.EMBEDDING_MODEL,
+        input: text,
+      });
+
+      return response.data[0].embedding;
+    } catch (error) {
+      console.error("Create embedding error:", error);
+      return null;
+    }
+  }
+
+  // Generate enhanced context with summaries
+  async generateContextualResponse(context = {}) {
+    // Add summaries and semantic matches to context
+    const enhancedContext = {
+      ...context,
+      hasSummaries: context.summaries && context.summaries.length > 0,
+      summaryContext: context.summaries?.map(s => s.summary_text).join('\n'),
+      semanticContext: context.semanticMatches?.map(s => s.content).join('\n'),
+    };
+
+    // Build messages with enhanced context
+    const messages = [
+      {
+        role: "system",
+        content: this.buildContextAwarePrompt(enhancedContext)
+      },
+      { role: "user", content: context.currentMessage }
+    ];
+
+    const completion = await this.openai.chat.completions.create({
+      model: this.model,
+      messages,
+      temperature: 0.8,
+      max_tokens: this.maxTokens,
+      presence_penalty: 0.8,
+      frequency_penalty: 0.5
+    });
+
+    const aiResponse = completion.choices?.[0]?.message?.content?.trim();
+    return this.parseAIResponse(aiResponse, context);
+  }
+
+  buildContextAwarePrompt(context) {
+    let basePrompt = this.buildEnhancedSystemPrompt(context);
+
+    if (context.hasSummaries) {
+      basePrompt += `\n\nPREVIOUS CONVERSATION CONTEXT:\n${context.summaryContext}`;
+    }
+
+    if (context.semanticContext) {
+      basePrompt += `\n\nRELEVANT PAST DISCUSSIONS:\n${context.semanticContext}`;
+    }
+
+    return basePrompt;
+  }
+
+  // Add this method to OpenAIService class
+  truncateContext(messages, maxTokens = 500) {
+    if (!messages || messages.length === 0) return [];
+
+    let totalTokens = 0;
+    const truncated = [];
+
+    // Start from most recent and work backwards
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const message = messages[i];
+      // Estimate tokens (4 characters ≈ 1 token for English)
+      const messageText = message.message || message.text || '';
+      const msgTokens = Math.ceil(messageText.length / 4);
+
+      // Stop if adding this message would exceed limit
+      if (totalTokens + msgTokens > maxTokens) {
+        // If we haven't added any messages yet, at least add a truncated version
+        if (truncated.length === 0) {
+          const truncatedText = messageText.substring(0, maxTokens * 4);
+          truncated.unshift({
+            ...message,
+            message: truncatedText + '...'
+          });
+        }
+        break;
+      }
+
+      truncated.unshift(message);
+      totalTokens += msgTokens;
+    }
+
+    return truncated;
+  }
   // ----------------------------------------
   // AstroNow – Single User Daily Horoscope
   // ----------------------------------------
@@ -758,6 +758,97 @@ STYLE:
     };
   }
 
+  // ═══════════════════════════════════════════════════════════
+  // 🔮 CONTEXTUAL HOROSCOPE (Conversational, Context-Aware)
+  // ═══════════════════════════════════════════════════════════
+  async generateContextualHoroscope(user, recentMessages = [], summaries = []) {
+    const {
+      name = "friend",
+      sign = "Leo",
+      birth_date: dob = "",
+      birth_time = "",
+      birth_location = "India"
+    } = user;
+
+    const conversationContext = recentMessages
+      .slice(-10)
+      .map(msg => typeof msg === 'string' ? msg : `${msg.sender}: ${msg.message}`)
+      .join('\n');
+
+    const historicalContext = summaries
+      .slice(0, 3)
+      .map(s => typeof s === 'string' ? s : s.summary_text)
+      .join('\n');
+
+    const horoscopePrompt = `You are AstroNow Echo, ${name}'s cosmic bestie and personal astrologer.
+
+USER'S BIRTH CHART:
+Name: ${name}
+Sun Sign: ${sign}
+Birth Date: ${dob}
+Birth Time: ${birth_time}
+Location: ${birth_location}
+
+RECENT CONVERSATION:
+${conversationContext || "No recent messages"}
+
+CONVERSATION HISTORY:
+${historicalContext || "New conversation"}
+
+Generate a HYPER-PERSONALIZED horoscope for ${name} that:
+
+1. **References their recent conversations**
+   - If they asked about love/soulmates, focus on that
+   - If they're stressed about work/projects, address that
+   - Connect today's cosmic energy to what THEY actually care about
+
+2. **Uses their ACTUAL birth chart**
+   - Calculate their Ascendant (Lagna) from birth time + location
+   - Mention their Moon sign (Rashi)
+   - Reference their current Dasha period (based on age from DOB)
+   - Explain how TODAY's transits affect THEIR natal chart
+
+3. **Feels like a TEXT from a friend, not a newspaper column**
+   - Use contractions ("you're" not "you are")
+   - Add casual phrases ("btw", "honestly", "real talk")
+   - Sound like you're DMing them, not writing an article
+   - NO "tune in tomorrow" - this is a conversation
+
+4. **Be SPECIFIC and ACTIONABLE**
+   - Give concrete advice for TODAY
+   - Mention specific planetary transits happening now
+   - Use exact timing when relevant
+
+5. **KEEP IT SHORT** 
+   - Maximum 2-3 paragraphs
+   - Under 200 words total
+   - Get to the point quickly
+
+STRUCTURE:
+- Paragraph 1: Today's cosmic energy + how it affects THEM specifically (reference their chart)
+- Paragraph 2: Actionable advice for TODAY based on what they've been talking about
+- Final line: Encouraging close (1 sentence max)
+
+Write like you're texting your friend, not publishing a horoscope column. Be warm, mystical, and CONCISE.`;
+
+    try {
+      const completion = await this.openai.chat.completions.create({
+        model: "gpt-4o-mini",
+        messages: [
+          { role: "system", content: horoscopePrompt },
+          { role: "user", content: "What's my horoscope for today?" }
+        ],
+        temperature: 0.85,
+        max_tokens: 400
+      });
+
+      return completion.choices?.[0]?.message?.content?.trim() ||
+        `The stars are aligning for you today, ${name}. Trust your intuition.`;
+    } catch (error) {
+      console.error("Contextual horoscope failed:", error);
+      return `${name}, the cosmic energy today is powerful. Your ${sign} nature will guide you.`;
+    }
+  }
 
 }
 
