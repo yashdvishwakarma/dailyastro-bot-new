@@ -10,6 +10,7 @@ import OpenAIService from '../services/OpenAIService.js';
 import MetricsService from '../services/MetricsService.js';
 import getMemoryManager from '../services/ConversationMemoryManager.js';
 import PersonalityService from "../services/PersonalityService.js";
+import getStateTracker from '../services/ConversationStateTracker.js';
 
 class ConversationHandler {
   constructor(services = {}) {
@@ -28,6 +29,7 @@ class ConversationHandler {
     this.value = new ValueGenerator(services.astrology, this.memory, this.ai);
     this.memoryManager = getMemoryManager();
     this.personalityInject = new PersonalityService();
+    this.stateTracker = getStateTracker(); // NEW: State tracker
 
     this.db = null;
   }
@@ -64,6 +66,12 @@ class ConversationHandler {
 
       // 2️⃣ Determine mood
       const botMood = await this.personality.determineMood(analysis.context);
+
+      // 2.5️⃣ UPDATE CONVERSATION STATE (Critical Fix)
+      // We must update the state with the CURRENT message before generating the response
+      // otherwise the AI sees stale data (e.g. thinking we're still talking about the uncle)
+      const currentState = await this.stateTracker.getState(chatId);
+      await this.stateTracker.updateState(chatId, message, currentState);
 
       // 3️⃣ Build OpenAI context with ENHANCED MEMORY
       const enhancedMemory = await this.memoryManager.getEnhancedContext(chatId, message);
@@ -111,12 +119,14 @@ class ConversationHandler {
         currentMessage: message,
         userSign: user.sign,
         userName: user.name,
+        userBirthDate: user.birth_date, // NEW: Add birth date for date comparison
         botMood,
         messageCount,
         energyLevel: this.personality.energyLevel,
         // Already optimized from memory manager
         recentMessages: enhancedMemory.recentMessages,
         summaries: enhancedMemory.summaries,
+        conversationState: enhancedMemory.conversationState, // NEW: Include state
         personalitySystemPrompt,
         preferredConversationStyle: style
         // Don't send these unless absolutely needed:
@@ -284,7 +294,11 @@ class ConversationHandler {
         await this.memory.process(userMessage, botResponse, analysis);
       }
 
-      // NEW: Trigger async summarization check
+      // NEW: Update conversation state after storing message
+      const previousState = await this.stateTracker.getState(user.chat_id);
+      await this.stateTracker.updateState(user.chat_id, userMessage, previousState);
+
+      // Trigger async summarization check
       this.memoryManager.checkAndTriggerSummarization(user.chat_id);
 
     } catch (error) {

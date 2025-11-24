@@ -1,14 +1,15 @@
 // services/ConversationMemoryManager.js
 import getDatabase from './DatabaseService.js';
 import OpenAIService from './OpenAIService.js';
+import getStateTracker from './ConversationStateTracker.js';
 
 class ConversationMemoryManager {
   constructor() {
     this.openAIService = new OpenAIService();
     this.summarizationQueue = new Map(); // Track ongoing summarizations
     this.SUMMARY_THRESHOLD = 10;
-        this.summaryCache = new Map(); 
-    this.cacheTimeout = 30 * 60 * 1000; 
+    this.summaryCache = new Map();
+    this.cacheTimeout = 30 * 60 * 1000;
   }
 
   /**
@@ -66,7 +67,7 @@ class ConversationMemoryManager {
 
     // 1. Get unsummarized messages
     const messages = await db.getUnsummarizedMessages(chatId, this.SUMMARY_THRESHOLD);
-    
+
     if (messages.length < this.SUMMARY_THRESHOLD) {
       console.log(`Not enough messages to summarize (${messages.length})`);
       return;
@@ -76,7 +77,7 @@ class ConversationMemoryManager {
 
     // 2. Generate summary using AI
     const summaryText = await this.openAIService.generateSummary(messages);
-    
+
     if (!summaryText) {
       throw new Error('Failed to generate summary');
     }
@@ -100,137 +101,89 @@ class ConversationMemoryManager {
 
   /**
    * Get enhanced context for a conversation
+   * OPTIMIZED: 3 messages + state tracking instead of 5 truncated messages
    */
-// async getEnhancedContext(chatId, currentMessage) {
-//   const db = await getDatabase();
+  async getEnhancedContext(chatId, currentMessage) {
+    const db = await getDatabase();
+    const stateTracker = getStateTracker();
 
-//   try {
-//     // Check cache first
-//     const cached = this.summaryCache.get(chatId);
-//     if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-//       console.log(`📦 Using cached context for ${chatId}`);
-//       return cached.data;
-//     }
+    try {
+      // Check cache first
+      const cached = this.summaryCache.get(chatId);
+      if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
+        console.log(`📦 Using cached context for ${chatId}`);
+        return cached.data;
+      }
 
-//     // Create embedding for current message for semantic search
-//     const queryEmbedding = await this.openAIService.createEmbedding(currentMessage);
+      // Create embedding for current message for semantic search
+      const queryEmbedding = await this.openAIService.createEmbedding(currentMessage);
 
-//     // Fetch all context data in parallel
-//     const [recentMessages, summaries, semanticMatches] = await Promise.all([
-//       db.getFullRecentMessages(chatId, 5), // Last 5 messages
-//       db.getRecentSummaries(chatId, 2),     // Last 2 summaries
-//       queryEmbedding ? db.semanticSearch(chatId, queryEmbedding, 2) : []
-//     ]);
+      // Fetch all context data in parallel + conversation state
+      const [recentMessages, summaries, semanticMatches, conversationState] = await Promise.all([
+        db.getFullRecentMessages(chatId, 3), // REDUCED: 3 messages instead of 5
+        db.getRecentSummaries(chatId, 2),
+        queryEmbedding ? db.semanticSearch(chatId, queryEmbedding, 2) : [],
+        stateTracker.getState(chatId) // NEW: Get conversation state
+      ]);
 
-//     // Create the context object
-//     const context = {
-//       recentMessages,
-//       summaries,
-//       semanticMatches,
-//       hasContext: summaries.length > 0 || semanticMatches.length > 0
-//     };
+      // OPTIMIZE: Keep full messages but in chronological order (oldest → newest)
+      const optimizedMessages = recentMessages
+        .reverse() // FIX: Reverse to chronological order
+        .map(msg => ({
+          sender: msg.sender,
+          message: msg.message // NO TRUNCATION: Keep full message
+        }));
 
-//     // Cache the result
-//     this.summaryCache.set(chatId, {
-//       data: context,
-//       timestamp: Date.now()
-//     });
+      // Keep summaries full (they're already concise)
+      const optimizedSummaries = summaries.map(sum =>
+        typeof sum === 'string' ? sum : sum.summary_text
+      );
 
-//     // Clean old cache entries if cache gets too big
-//     if (this.summaryCache.size > 100) {
-//       const oldest = [...this.summaryCache.entries()]
-//         .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
-//       this.summaryCache.delete(oldest[0]);
-//     }
+      // Semantic matches - keep relevant parts
+      const optimizedSemanticMatches = semanticMatches.map(match =>
+        typeof match === 'string' ? match : match.content
+      );
 
-//     return context;
-    
-//   } catch (error) {
-//     console.error('Get enhanced context error:', error);
-//     // Fallback to just recent messages
-//     return {
-//       recentMessages: await db.getFullRecentMessages(chatId, 5),
-//       summaries: [],
-//       semanticMatches: [],
-//       hasContext: false
-//     };
-//   }
-// }
+      // Create optimized context with state
+      const context = {
+        recentMessages: optimizedMessages,
+        summaries: optimizedSummaries,
+        semanticMatches: optimizedSemanticMatches,
+        conversationState, // NEW: Include conversation state
+        hasContext: summaries.length > 0 || semanticMatches.length > 0
+      };
 
+      // Cache the result
+      this.summaryCache.set(chatId, {
+        data: context,
+        timestamp: Date.now()
+      });
 
-async getEnhancedContext(chatId, currentMessage) {
-  const db = await getDatabase();
+      // Clean old cache entries if cache gets too big
+      if (this.summaryCache.size > 100) {
+        const oldest = [...this.summaryCache.entries()]
+          .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
+        this.summaryCache.delete(oldest[0]);
+      }
 
-  try {
-    // Check cache first
-    const cached = this.summaryCache.get(chatId);
-    if (cached && Date.now() - cached.timestamp < this.cacheTimeout) {
-      console.log(`📦 Using cached context for ${chatId}`);
-      return cached.data;
+      return context;
+
+    } catch (error) {
+      console.error('Get enhanced context error:', error);
+      // Fallback to just recent messages
+      const fallbackMessages = await db.getFullRecentMessages(chatId, 3);
+      return {
+        recentMessages: fallbackMessages.reverse().map(msg => ({
+          sender: msg.sender,
+          message: msg.message // Keep full message even in fallback
+        })),
+        summaries: [],
+        semanticMatches: [],
+        conversationState: { current_topic: 'general_chat' },
+        hasContext: false
+      };
     }
-
-    // Create embedding for current message for semantic search
-    const queryEmbedding = await this.openAIService.createEmbedding(currentMessage);
-
-    // Fetch all context data in parallel
-    const [recentMessages, summaries, semanticMatches] = await Promise.all([
-      db.getFullRecentMessages(chatId, 5),
-      db.getRecentSummaries(chatId, 2),
-      queryEmbedding ? db.semanticSearch(chatId, queryEmbedding, 2) : []
-    ]);
-
-    // OPTIMIZE: Strip unnecessary fields
-    const optimizedMessages = recentMessages.map(msg => ({
-      sender: msg.sender,
-      message: msg.message.substring(0, 300) // Truncate long messages
-    }));
-
-    const optimizedSummaries = summaries.map(sum => 
-      sum.summary_text.substring(0, 300) // Just the text, limited length
-    );
-
-    const optimizedSemanticMatches = semanticMatches.map(match => 
-      match.content.substring(0, 300) // Just the content, limited
-    );
-
-    // Create optimized context
-    const context = {
-      recentMessages: optimizedMessages,
-      summaries: optimizedSummaries,
-      semanticMatches: optimizedSemanticMatches,
-      hasContext: summaries.length > 0 || semanticMatches.length > 0
-    };
-
-    // Cache the result
-    this.summaryCache.set(chatId, {
-      data: context,
-      timestamp: Date.now()
-    });
-
-    // Clean old cache entries if cache gets too big
-    if (this.summaryCache.size > 100) {
-      const oldest = [...this.summaryCache.entries()]
-        .sort((a, b) => a[1].timestamp - b[1].timestamp)[0];
-      this.summaryCache.delete(oldest[0]);
-    }
-
-    return context;
-    
-  } catch (error) {
-    console.error('Get enhanced context error:', error);
-    // Fallback to just recent messages
-    const fallbackMessages = await db.getFullRecentMessages(chatId, 5);
-    return {
-      recentMessages: fallbackMessages.map(msg => ({
-        sender: msg.sender,
-        message: msg.message.substring(0, 150)
-      })),
-      summaries: [],
-      semanticMatches: [],
-      hasContext: false
-    };
   }
-}
 
   /**
    * Format context for display or debugging
