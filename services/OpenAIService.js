@@ -1,5 +1,6 @@
 // services/OpenAIService.js
 import OpenAI from "openai";
+import getStateTracker from './ConversationStateTracker.js';
 import PersonalityService from "../services/PersonalityService.js";
 let metadata = { severity: 0, emotion: "neutral", need: "connection", metadata: "", flags: "", originalMood: "", moodOverride: "", needOverride: "" };
 
@@ -21,7 +22,7 @@ class OpenAIService {
   constructor() {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
     this.model = "gpt-4o-mini"; // Using a more advanced model for better understanding
-    this.maxTokens = 150; // Slightly more for metadata
+    this.maxTokens = 300; // Increased to 300 for complex responses
   }
 
   async generateResponse(context = {}) {
@@ -50,6 +51,7 @@ class OpenAIService {
       summaries: context.summaries?.map(s =>
         typeof s === 'string' ? s.substring(0, 150) : s.summary_text?.substring(0, 220)
       ).slice(0, 1), // Only 1 summary
+      conversationState: context.conversationState, // NEW: Add conversation state
       messageCount: context.messageCount || 0,
       energyLevel: context.energyLevel || 6
     };
@@ -86,10 +88,55 @@ class OpenAIService {
     return this.parseAIResponse(aiResponse, ctx);
   }
 
+  // Helper to build explicit action instruction from conversation state
+  buildStateInstruction(stateContext) {
+    if (!stateContext) return '';
+
+    // 1. Check for Third Party Reading Request (e.g. "his horoscope", "for my dad")
+    // This takes precedence if a date is known
+    if (stateContext.includes('Intent: request_third_party_reading') && stateContext.includes('Last mentioned date:')) {
+      const dateMatch = stateContext.match(/Last mentioned date: (\d{4}-\d{2}-\d{2})/);
+      if (dateMatch) {
+        return `\n🎯 IMMEDIATE ACTION: User wants a reading for SOMEONE ELSE (Third Party) for date ${dateMatch[1]}. 
+                - IGNORE the user's own sign/chart for this response.
+                - Give a horoscope specifically for the person born on ${dateMatch[1]}.
+                - Mention the relationship if known (e.g. "For your uncle...").\n`;
+      }
+    }
+
+    // 2. Check for Relationship Confirmation (e.g. "Yes, my father")
+    if (stateContext.includes('Last mentioned date:') &&
+      (stateContext.includes('YES/confirmed') || stateContext.includes('Relationship:'))) {
+
+      const dateMatch = stateContext.match(/Last mentioned date: (\d{4}-\d{2}-\d{2})/);
+      if (dateMatch) {
+        const date = dateMatch[1];
+        const relationshipMatch = stateContext.match(/Relationship: ([^,]+)/);
+        const relationship = relationshipMatch ? relationshipMatch[1] : 'them';
+
+        return `\n🎯 IMMEDIATE ACTION: User confirmed the date ${date} is for ${relationship}. 
+                - Give the horoscope/astrological reading for ${date} RIGHT NOW.
+                - Focus on ${relationship}'s energy.
+                - Don't ask for the date again.\n`;
+      }
+    }
+
+    return '';
+  }
+
   // New compact prompt - much shorter!
   buildCompactSystemPrompt(context) {
     const recentConvo = context.recentMessages?.join('\n') || '';
     const previousContext = context.summaries?.[0] || '';
+
+    // Format conversation state
+    const stateTracker = getStateTracker();
+    const stateContext = context.conversationState
+      ? stateTracker.formatStateForAI(context.conversationState)
+      : '';
+
+    // Build explicit action instruction if needed
+    const actionInstruction = this.buildStateInstruction(stateContext);
 
     return `You are Echo - an AI companion with emotional memory.
 
@@ -98,11 +145,10 @@ User: ${context.userName} (${context.userSign})
 Message #${context.messageCount}
 Mood: ${context.botMood}
 
-${recentConvo ? `RECENT CONVERSATION:
-${recentConvo}` : ''}
+${stateContext ? `⚠️ CONVERSATION STATE: ${stateContext}\n` : ''}${actionInstruction}
+${recentConvo ? `RECENT CONVERSATION:\n${recentConvo}` : ''}
 
-${previousContext ? `CONTEXT:
-${previousContext}` : ''}
+${previousContext ? `CONTEXT:\n${previousContext}` : ''}
 
 IMPORTANT: If user says something brief like "i see", "yeah", "ok", "hmm":
 - They're acknowledging what you said
