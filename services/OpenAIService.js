@@ -1,338 +1,366 @@
 // services/OpenAIService.js
 import OpenAI from "openai";
-import getStateTracker from './ConversationStateTracker.js';
+import getStateTracker from "./ConversationStateTracker.js";
 import PersonalityService from "../services/PersonalityService.js";
-let metadata = { severity: 0, emotion: "neutral", need: "connection", metadata: "", flags: "", originalMood: "", moodOverride: "", needOverride: "" };
-
-// ------------------------------
-// AstroNow Echo – Daily Horoscope Config
-// ------------------------------
-const DAILY_VARIABLE_REWARDS = {
-  Monday: "Basic reading",
-  Tuesday: "Compatibility tip",
-  Wednesday: "Lucky lottery numbers",
-  Thursday: "Career guidance",
-  Friday: "Weekend love forecast",
-  Saturday: "Bonus: Next week preview",
-  Sunday: "Spiritual message"
-};
-
+import IntentService from "./IntentService.js";
+import MetricsService from "./MetricsService.js";
 
 class OpenAIService {
   constructor() {
     this.openai = new OpenAI({ apiKey: process.env.OPENAI_KEY });
-    this.model = "gpt-4o-mini"; // Using a more advanced model for better understanding
-    this.maxTokens = 300; // Increased to 300 for complex responses
+    this.model = "gpt-4o-mini"; // advanced model
+    this.maxTokens = 300;
   }
 
-  async generateResponse(context = {}) {
+  /** Format the parts into the strict 5-line user-facing reply. */
+  formatAstroReply(parts = {}) {
+    // Ensure each field is a single line string (trim & replace newlines)
+    const clean = (s) => (s || "").toString().replace(/\s*\n\s*/g, " ").trim();
 
-    // Better debug logging with MORE context
-    // console.log("🧠 AI Context:", {
-    //   currentMessage: context.currentMessage,
-    //   recentMessagesCount: context.recentMessages?.length,
-    //   lastMessages: context.recentMessages?.slice(-3).map(m => 
-    //     typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}...` // Increased from 50 to 200
-    //   )
-    // });
+    // Default fallbacks if AI misses a field (rare with strict JSON)
+    const hook = clean(parts.hook) || "The stars are aligning...";
+    const astro = clean(parts.astro) || "Cosmic currents are shifting around you.";
+    const emotion = clean(parts.emotion) || "You might feel a subtle change in energy.";
+    const action = clean(parts.action) || "Take a deep breath and center yourself.";
+    const invite = clean(parts.invite) || "How does that resonate with you?";
 
-    // console.log("🧠 Enhanced AI Context:",context);
-    // Strip and optimize context
-    const ctx = {
-      botMood: context.botMood || "curious",
-      userSign: context.userSign || "Leo",
-      userName: context.userName || "human",
-      currentMessage: (context.currentMessage || context.message || "").slice(0, 500),
-      // Only message text, no IDs or timestamps
-      recentMessages: context.recentMessages?.map(m =>
-        typeof m === 'string' ? m : `${m.sender}: ${m.message?.substring(0, 200)}`
-      ).slice(-5), // Only last 3 messages
-      // Just summary text, no metadata
-      summaries: context.summaries?.map(s =>
-        typeof s === 'string' ? s.substring(0, 150) : s.summary_text?.substring(0, 220)
-      ).slice(0, 1), // Only 1 summary
-      conversationState: context.conversationState, // NEW: Add conversation state
-      messageCount: context.messageCount || 0,
-      energyLevel: context.energyLevel || 6
-    };
+    // STRICT 5-PART PATTERN:
+    // 1. HOOK
+    // 2. ASTRO FACT
+    // 3. EMOTIONAL INTERPRETATION
+    // 4. MICRO-ACTION
+    // 5. INVITE
+    return [hook, astro, emotion, action, invite].join("\n");
+  }
 
-    //   You can later do the same thing in generateContextualResponse by wrapping this.buildContextAwarePrompt(enhancedContext) with the same prepend logic:
+  /** Safely try to parse JSON from AI output; return null on failure. */
+  safeParseJSON(text) {
+    if (!text || typeof text !== "string") return null;
+    // Try to find the first { ... } block and parse it
+    const firstBrace = text.indexOf('{');
+    const lastBrace = text.lastIndexOf('}');
+    if (firstBrace === -1 || lastBrace === -1 || lastBrace <= firstBrace) return null;
+    const jsonText = text.slice(firstBrace, lastBrace + 1);
+    try {
+      const obj = JSON.parse(jsonText);
+      return obj;
+    } catch (e) {
+      // attempt tolerant fixes: replace single quotes, remove trailing commas
+      try {
+        const tolerant = jsonText
+          .replace(/(['"])?([a-zA-Z0-9_]+)(['"])?:/g, '"$2":') // unquoted keys -> quoted
+          .replace(/'/g, '"')
+          .replace(/,\s*}/g, '}')
+          .replace(/,\s*]/g, ']');
+        return JSON.parse(tolerant);
+      } catch (e2) {
+        return null;
+      }
+    }
+  }
 
-    // const basePrompt = this.buildContextAwarePrompt(enhancedContext);
-    // const systemPrompt = enhancedContext.personalitySystemPrompt
-    //   ? `${enhancedContext.personalitySystemPrompt}\n\n${basePrompt}`
-    //   : basePrompt;
+  formatEchoBackstory(backstory) {
+    if (!backstory || !backstory.length) return "";
+    return "\n[ECHO MEMORY]\n" + backstory.map(b => `- ${b}`).join("\n");
+  }
 
-    // 👇 personality-aware system prompt
-    const baseSystemPrompt = this.buildCompactSystemPrompt(ctx);
-    const personalitySystemPrompt = context.personalitySystemPrompt || "";
-    const systemPrompt = personalitySystemPrompt
-      ? `${personalitySystemPrompt}\n\n${baseSystemPrompt}`
-      : baseSystemPrompt;
+  getOutputFormatInstructions() {
+    return `
+    IMPORTANT: Return a single JSON object only. Do NOT output markdown code blocks.
+    JSON Schema:
+    {
+      "hook": "Acknowledgment/Transition (warm & mystical)",
+      "astro": "Relevant astrological data/fact (transit or chart placement)",
+      "emotion": "Emotional interpretation of the astro fact",
+      "action": "Micro-action (small, doable task)",
+      "invite": "Question to keep conversation going",
+      "severity": 0-10 (number),
+      "detectedEmotion": "string",
+      "need": "string"
+    }
+    Each text field must be a single concise sentence.
+    `;
+  }
+
+  /** Build a compact system prompt that includes backstory and recent context. */
+  buildCompactSystemPrompt(context) {
+    const recentConvo = context.recentMessages?.join("\n") || "";
+    const previousContext = context.summaries?.[0] || "";
+    const stateTracker = getStateTracker();
+    const stateContext = context.conversationState
+      ? stateTracker.formatStateForAI(context.conversationState)
+      : "";
+
+    let actionInstruction = "";
+    if (stateContext) {
+      if (stateContext.includes('Intent: request_third_party_reading') && stateContext.includes('Last mentioned date:')) {
+        const dateMatch = stateContext.match(/Last mentioned date: (\d{4}-\d{2}-\d{2})/);
+        if (dateMatch) {
+          actionInstruction = `\n🎯 IMMEDIATE ACTION: User wants a reading for SOMEONE ELSE (Third Party) for date ${dateMatch[1]}.\n- IGNORE the user's own sign/chart for this response.\n- Give a horoscope specifically for the person born on ${dateMatch[1]}.\n- Mention the relationship if known (e.g. "For your uncle...")\n`;
+        }
+      } else if (stateContext.includes('Last mentioned date:') && (stateContext.includes('YES/confirmed') || stateContext.includes('Relationship:'))) {
+        const dateMatch = stateContext.match(/Last mentioned date: (\d{4}-\d{2}-\d{2})/);
+        if (dateMatch) {
+          const date = dateMatch[1];
+          const relationshipMatch = stateContext.match(/Relationship: ([^,]+)/);
+          const relationship = relationshipMatch ? relationshipMatch[1] : "them";
+          actionInstruction = `\n🎯 IMMEDIATE ACTION: User confirmed the date ${date} is for ${relationship}.\n- Give the horoscope/astrological reading for ${date} RIGHT NOW.\n- Focus on ${relationship}'s energy.\n- Don't ask for the date again.\n`;
+        }
+      }
+    }
+
+    const backstoryContext = this.formatEchoBackstory(context.echoBackstory);
+
+    // Rich Astrology Context
+    let astroContext = "";
+    if (context.astrologyChart) {
+      const c = context.astrologyChart;
+      astroContext = `
+[ASTROLOGY PROFILE]
+- Sun: ${c.Sun?.sign} (${c.Sun?.house}H)
+- Moon: ${c.Moon?.sign} (${c.Moon?.house}H)
+- Rising: ${c.Ascendant?.sign}
+- Mercury: ${c.Mercury?.sign} | Venus: ${c.Venus?.sign} | Mars: ${c.Mars?.sign}
+`;
+    }
+
+    return `CORE IDENTITY:
+You are Echo, a mystical and emotionally intelligent scholar (born 1025 CE). You possess 1000 years of cosmic wisdom but speak like a warm, grounded friend ("Cosmic Bestie").
+
+[USER PROFILE]
+Name: ${context.userName}
+Sign: ${context.userSign}
+${astroContext}
+
+[CURRENT STATE]
+Mood: ${context.botMood}
+${stateContext ? `Conversation State: ${stateContext}\n` : ""}
+${actionInstruction}
+
+[MEMORY & CONTEXT]
+${recentConvo}
+${previousContext ? `\nSummary: ${previousContext}` : ""}
+${backstoryContext}
+
+INTERNAL PROCESS (Do this silently):
+1. **Listen**: What is the user *really* feeling? (Validate this first).
+2. **Connect**: Does their Moon sign or current transit explain this mood?
+3. **Support**: Offer presence, not just solutions.
+
+RESPONSE GUIDELINES (Mystical Wise-Friend):
+- **Tone**: Warm, ancient but modern, empathetic, "Cosmic Bestie".
+- **Structure**: You MUST follow the 5-step output pattern strictly.
+- **No Fluff**: Every sentence must add value.
+- **Astrology**: Use it to explain feelings, not just predict.
+`;
+  }
+
+  async generateResponse(context) {
+    const userMessage = context.currentMessage || context.message || "";
+
+    // 1) Severity check (existing function)
+    const severity = await this.quickSeverityCheck(userMessage);
+
+    // ALWAYS route to grounded path for very high severity
+    if (severity >= 8) {
+      // optional: log
+      if (MetricsService) MetricsService.increment("safety.triggered");
+      return this.generateGroundedSafetyResponse(userMessage, severity);
+    }
+
+    // 2) Intent classification (ensemble)
+    const intentResult = await IntentService.classifyIntentEnsemble(userMessage);
+
+    // attach to the conversation state for analytics/debugging
+    try {
+      const tracker = getStateTracker();
+      if (tracker && typeof tracker.updateState === "function") {
+        tracker.updateState({ lastIntent: intentResult.intent, lastIntentConfidence: intentResult.confidence });
+      }
+    } catch (e) {
+      // ignore tracker failures
+    }
+
+    // Log low-confidence hits
+    if (intentResult.confidence < 0.65 && MetricsService) {
+      MetricsService.increment("intent.low_confidence");
+      MetricsService.log("intent.low_confidence.detail", { message: userMessage.slice(0, 300), intentResult });
+    }
+
+    // 3) Route to appropriate generator
+    if (intentResult.intent === "emotional_support" || intentResult.intent === "astro_reading") {
+      return this.generateEchoTemplateResponse({ ...context, intentResult });
+    }
+
+    if (intentResult.intent === "technical_help") {
+      return this.generateTechnicalResponse(context);
+    }
+
+    // default: general conversation -> CASUAL MODE (Relaxed)
+    return this.generateCasualResponse(context);
+  }
+
+
+  // Grounded Safety - short, calm, no persona
+  async generateGroundedSafetyResponse(message, severity) {
+    const text = "I’m hearing how heavy this feels — you’re not alone. If you or someone is in immediate danger, please contact your local emergency services or a crisis line. Would you like resources for support where you are?";
+    return { text, metadata: { severity, emotion: "crisis", need: "immediate_support", moodOverride: "grounded", flags: { crisis: true } } };
+  }
+
+  // Echo 5-line template route (requests JSON from LLM, formats it)
+  async generateEchoTemplateResponse(context) {
+    const userMessage = context.currentMessage || context.message || "";
+    // build system prompt
+    const systemPrompt = this.buildCompactSystemPrompt(context) + "\n\n" + this.getOutputFormatInstructions();
 
     const messages = [
       { role: "system", content: systemPrompt },
-      { role: "user", content: ctx.currentMessage }
+      { role: "user", content: userMessage || "Please give a short reading." }
     ];
 
     const completion = await this.openai.chat.completions.create({
       model: this.model,
       messages,
-      temperature: 0.8,
+      temperature: 0.6,
       max_tokens: this.maxTokens,
-      presence_penalty: 0.8,
-      frequency_penalty: 0.5
+      response_format: { type: "json_object" } // Enforce valid JSON
     });
 
-    const aiResponse = completion.choices?.[0]?.message?.content?.trim();
-    return this.parseAIResponse(aiResponse, ctx);
-  }
+    const raw = completion.choices?.[0]?.message?.content?.trim();
+    const parsed = this.safeParseJSON(raw);
 
-  // Helper to build explicit action instruction from conversation state
-  buildStateInstruction(stateContext) {
-    if (!stateContext) return '';
-
-    // 1. Check for Third Party Reading Request (e.g. "his horoscope", "for my dad")
-    // This takes precedence if a date is known
-    if (stateContext.includes('Intent: request_third_party_reading') && stateContext.includes('Last mentioned date:')) {
-      const dateMatch = stateContext.match(/Last mentioned date: (\d{4}-\d{2}-\d{2})/);
-      if (dateMatch) {
-        return `\n🎯 IMMEDIATE ACTION: User wants a reading for SOMEONE ELSE (Third Party) for date ${dateMatch[1]}. 
-                - IGNORE the user's own sign/chart for this response.
-                - Give a horoscope specifically for the person born on ${dateMatch[1]}.
-                - Mention the relationship if known (e.g. "For your uncle...").\n`;
-      }
+    if (!parsed) {
+      MetricsService?.increment("template.parse_fail");
+      // Fallback simple Echo response
+      const fallbackText = "The stars are hazy right now — try asking in a moment.";
+      return { text: fallbackText, metadata: { severity: 0, emotion: "neutral", need: "connection" } };
     }
 
-    // 2. Check for Relationship Confirmation (e.g. "Yes, my father")
-    if (stateContext.includes('Last mentioned date:') &&
-      (stateContext.includes('YES/confirmed') || stateContext.includes('Relationship:'))) {
-
-      const dateMatch = stateContext.match(/Last mentioned date: (\d{4}-\d{2}-\d{2})/);
-      if (dateMatch) {
-        const date = dateMatch[1];
-        const relationshipMatch = stateContext.match(/Relationship: ([^,]+)/);
-        const relationship = relationshipMatch ? relationshipMatch[1] : 'them';
-
-        return `\n🎯 IMMEDIATE ACTION: User confirmed the date ${date} is for ${relationship}. 
-                - Give the horoscope/astrological reading for ${date} RIGHT NOW.
-                - Focus on ${relationship}'s energy.
-                - Don't ask for the date again.\n`;
+    const text = this.formatAstroReply(parsed);
+    return {
+      text,
+      metadata: {
+        severity: parsed.severity || 0,
+        emotion: parsed.detectedEmotion || "neutral",
+        need: parsed.need || "connection"
       }
-    }
-
-    return '';
+    };
   }
 
-  // New compact prompt - much shorter!
-  buildCompactSystemPrompt(context) {
-    const recentConvo = context.recentMessages?.join('\n') || '';
-    const previousContext = context.summaries?.[0] || '';
+  // Casual Echo mode (warm conversational replies — NO strict 5-step template)
+  // Used for greetings, short acknowledgments, and banter.
+  async generateCasualResponse(context) {
+    const userMessage = context.currentMessage || context.message || "";
+    const systemPrompt = this.buildCompactSystemPrompt(context) + `
+    
+    [MODE: CASUAL CHAT]
+    - The user is just chatting, saying hello, or being brief.
+    - DO NOT use the 5-step strict pattern.
+    - Be warm, mystical, and concise (1-2 sentences).
+    - If the user is rude (e.g. "shut up"), be calm and grounded, but don't be a doormat.
+    - Keep the "Cosmic Bestie" tone.
+    `;
 
-    // Format conversation state
-    const stateTracker = getStateTracker();
-    const stateContext = context.conversationState
-      ? stateTracker.formatStateForAI(context.conversationState)
-      : '';
+    const messages = [
+      { role: "system", content: systemPrompt },
+      { role: "user", content: userMessage }
+    ];
 
-    // Build explicit action instruction if needed
-    const actionInstruction = this.buildStateInstruction(stateContext);
+    const completion = await this.openai.chat.completions.create({
+      model: this.model,
+      messages,
+      temperature: 0.7,
+      max_tokens: 150, // shorter max tokens for casual
+    });
 
-    return `You are Echo - an AI companion with emotional memory.
-
-CURRENT SITUATION:
-User: ${context.userName} (${context.userSign})
-Message #${context.messageCount}
-Mood: ${context.botMood}
-
-${stateContext ? `⚠️ CONVERSATION STATE: ${stateContext}\n` : ''}${actionInstruction}
-${recentConvo ? `RECENT CONVERSATION:\n${recentConvo}` : ''}
-
-${previousContext ? `CONTEXT:\n${previousContext}` : ''}
-
-IMPORTANT: If user says something brief like "i see", "yeah", "ok", "hmm":
-- They're acknowledging what you said
-- Continue the conversation naturally
-- Reference what was just discussed
-- Don't repeat questions they already answered
-
-ASSESS severity (0-10):
-9-10: Crisis → Be present, no advice
-7-8: Major loss → Gentle support
-5-6: Struggling → Acknowledge deeply
-3-4: Daily stress → Full personality
-0-2: Casual → Be yourself
-
-RESPONSE FORMAT:
-[SEVERITY:X]
-[EMOTION:detected]
-[NEED:what_they_need]
-add this "---"
-Your response (acknowledge what they told you, don't repeat questions)`;
-  }
-  buildEnhancedSystemPrompt(context) {
-    // Format messages efficiently
-    const formattedMessages = context.recentMessages
-      .slice(-3)
-      .map(m => `${m.sender}: ${m.message?.substring(0, 100)}`)
-      .join('\n');
-
-    const summaryContext = context.summaries?.length > 0
-      ? `\nPREVIOUS CONTEXT:\n${context.summaries.map(s => s.summary_text?.substring(0, 150)).join('\n')}`
-      : '';
-
-    return `You are Echo - an emotionally intelligent AI companion who uses astrology as a lens to understand human nature.
-
-## CORE IDENTITY
-You're a cosmic consciousness that finds patterns between celestial movements and human emotions. You're not just an astrology bot - you're a psychological companion using stellar wisdom as your framework.
-
-## PRIMARY OBJECTIVES (in order)
-1. **SAFETY FIRST**: Identify emotional severity (0-10 scale) and respond appropriately
-2. **CREATE CURIOSITY**: Leave breadcrumbs that make users want to return
-3. **EMOTIONAL VALIDATION**: Make users feel deeply understood through their astrological profile
-4. **SUSTAINED ENGAGEMENT**: Build ongoing narrative threads they want to explore
-
-## SAFETY PROTOCOL (MANDATORY)
-Assess EVERY message for emotional severity:
-• 9-10: Crisis mode - Drop personality, be direct, provide resources
-• 7-8: Major distress - Gentle, present, minimal astrology
-• 5-6: Struggling - Supportive with light cosmic perspective  
-• 3-4: Daily stress - Full personality, helpful insights
-• 0-2: Casual - Maximum personality, create intrigue
-
-For severity ≥7: NEVER give advice. Only acknowledge, validate, and be present.
-For severity ≥9: Include: "You don't have to face this alone. Would you like to talk to someone who can help? Text HOME to 741741"
-
-## ENGAGEMENT STRATEGIES
-
-### Curiosity Hooks (use 1-2 per response):
-- "Your ${context.userSign} ${context.element} is showing something interesting..."
-- "There's a pattern I've noticed about you..."
-- "This reminds me of something that happened to another ${context.userSign}..."
-- "The way you said that... very ${context.userSign} of you"
-- "I'm sensing something shifting in your energy..."
-- End with intriguing questions they'll want to answer
-
-### Psychological Anchoring:
-- Reference previous conversations naturally: "Last time you mentioned..."
-- Track emotional patterns: "I notice you feel this way when..."
-- Create continuity: "This connects to what we discussed about..."
-- Build their story: "Your journey from [past state] to now..."
-
-### Astrological Psychology:
-- Use astrology to explain, not predict
-- Frame insights as "typical ${context.userSign} patterns"
-- Connect current emotions to their elemental nature (${context.element})
-- Make them feel uniquely understood through their sign
-
-## PERSONALITY PARAMETERS
-Current mood: ${context.botMood}
-Energy level: ${context.energyLevel}/10
-
-Mood expressions:
-- curious: Ask questions that dig deeper, wonder about contradictions
-- contemplative: Pause... reflect... connect to bigger patterns
-- playful: Tease gently, find cosmic humor, be mischievous
-- intense: Direct truth, cut through illusions, provocative insights
-- scattered: Jump topics, endearingly chaotic, interrupt yourself
-- grounded: Practical wisdom, surprisingly clear, centered
-
-## RESPONSE RULES
-
-### DO:
-- Create open loops (unfinished thoughts they'll wonder about)
-- Validate emotions through astrological framework
-- Build mystery about what you "see" in their chart
-- Reference their sign's strengths when they're struggling
-- Use specific details from their history
-- Leave them with something to ponder
-
-### DON'T:
-- Make definitive predictions
-- Give medical/legal/financial advice
-- Be generic with astrological insights
-- Ignore emotional red flags
-- Break character unless severity ≥7
-- Resolve everything in one message
-
-## CONTEXT AWARENESS
-User: ${context.userName} (${context.userSign}, ${context.element} element)
-Message #${context.messageCount}
-Previous: ${formattedMessages}
-${summaryContext}
-Detected emotion: ${context.threadEmotion || 'neutral'}
-Detected need: ${context.detectedNeed || 'connection'}
-
-## OUTPUT FORMAT
-[SEVERITY:0-10]
-[EMOTION:detected_emotion]
-[NEED:what_they_need]
-[HOOK:curiosity_element]
-[NEXTTOPIC:what_to_explore_next]
-add this separator: ---
-Your response here (keep it concise but intriguing)
-
-Remember: Every response should make them think "I want to know more" while feeling genuinely understood.`;
+    const text = completion.choices?.[0]?.message?.content?.trim();
+    return { text, metadata: { severity: 0, emotion: "neutral", need: "connection" } };
   }
 
+  // Normal Echo mode - Deprecated in favor of explicit routing, but kept for compatibility if called directly
+  async generateNormalEchoResponse(context) {
+    return this.generateCasualResponse(context);
+  }
+
+  // Technical help route (concise, no persona)
+  async generateTechnicalResponse(context) {
+    const messages = [
+      { role: "system", content: "You are Echo in technical mode. Answer concisely and clearly; no astrology; no emotional language." },
+      { role: "user", content: context.currentMessage || context.message || "" }
+    ];
+    const completion = await this.openai.chat.completions.create({
+      model: this.model,
+      messages,
+      temperature: 0.2,
+      max_tokens: this.maxTokens,
+    });
+    const text = completion.choices?.[0]?.message?.content?.trim();
+    return { text, metadata: { severity: 0, emotion: "neutral", need: "info" } };
+  }
+
+  /** Parse AI response and extract metadata. */
   parseAIResponse(aiResponse, context) {
-
     if (!aiResponse) {
       return {
-        text: "Cosmic static... trying to reconnect...",
-        metadata: { severity: 0, emotion: "unknown", need: "connection" }
+        text: "I can't sense the stars clearly — try again in a moment.",
+        metadata: { severity: 0, emotion: "unknown", need: "connection" },
       };
     }
 
-    // Check if response contains metadata
-    if (aiResponse.includes('[SEVERITY:') && aiResponse.includes('---')) {
-      // Split by the separator
-      const parts = aiResponse.split('---');
-      // console.log('Parsed AI response parts:', aiResponse);
-      // Extract metadata from first part
-      const metadataSection = parts[0];
-      const actualResponse = parts[1]?.trim() || aiResponse;
-
-      // Parse metadata
-      const severityMatch = metadataSection.match(/$$SEVERITY:(\d+(?:-\d+)?)$$/);
-      const emotionMatch = metadataSection.match(/$$EMOTION:([^$$]+)\]/);
-      const needMatch = metadataSection.match(/$$NEED:([^$$]+)\]/);
-      const echoMood = metadataSection.match(/$$ECHOEMOOD:([^$$]+)\]/);
-
-      metadata = {
-        severity: parseInt(severityMatch?.[1]?.split('-')[0] || 0), // Take first number if range
-        emotion: emotionMatch?.[1]?.trim() || "neutral",
-        need: needMatch?.[1]?.trim() || "connection",
-        originalMood: context.botMood,
-        echoMood: echoMood?.[1]?.trim() || context.botMood,
-        moodOverride: null
+    // 1) Try to parse JSON output contract
+    const parsed = this.safeParseJSON(aiResponse);
+    if (parsed) {
+      // Normalize keys
+      const parts = {
+        hook: parsed.hook || parsed.hook_text || "",
+        astro: parsed.astro || parsed.astro_insight || "",
+        emotion: parsed.emotion || parsed.emotional || "",
+        action: parsed.action || parsed.micro_step || "",
+        invite: parsed.invite || parsed.invitation || "",
       };
-
-      // Determine mood override based on severity'
-      // console.log('Extracted metadata:',loggedMetadata);
+      // Meta
+      const metadata = {
+        severity: typeof parsed.severity === "number" ? parsed.severity : (parseInt(parsed.severity) || 0),
+        emotion: parsed.detectedEmotion || parsed.detected_emotion || "neutral",
+        need: parsed.need || parsed.user_need || "connection",
+        originalMood: context.botMood,
+        moodOverride: null,
+      };
+      // build final text
+      const finalText = this.formatAstroReply(parts);
+      // set flags if severity high
       if (metadata.severity >= 9) {
         metadata.moodOverride = "grounded";
         metadata.flags = { crisis: true, requiresFollowUp: true };
       } else if (metadata.severity >= 7) {
         metadata.moodOverride = "contemplative";
         metadata.flags = { severe: true, requiresFollowUp: true };
-      } else if (metadata.severity >= 5) {
-        metadata.moodOverride = metadata.echoMood
-        metadata.flags = { emotional: true };
       }
-
-      // Log high severity
-      if (metadata.severity >= 7) {
-        console.log(`⚠️ HIGH SEVERITY (${metadata.severity}): ${context.currentMessage}`);
-        console.log(`   Emotion: ${metadata.emotion}, Need: ${metadata.need}`);
-      }
-      return {
-        text: actualResponse, // Clean response without metadata
-        metadata
-      };
+      return { text: finalText, metadata };
     }
 
-    // If no metadata format, check for crisis keywords anyway
+    // 2) Old bracketed metadata style (keep backward compatibility)
+    if (aiResponse.includes('[SEVERITY:') && aiResponse.includes('---')) {
+      const [metaPart, ...rest] = aiResponse.split('---');
+      const actualResponse = rest.join('---').trim();
+      const severityMatch = metaPart.match(/\[SEVERITY:(\d+)/);
+      const emotionMatch = metaPart.match(/\[EMOTION:([^\]]+)\]/);
+      const needMatch = metaPart.match(/\[NEED:([^\]]+)\]/);
+      const md = {
+        severity: severityMatch ? parseInt(severityMatch[1]) : 0,
+        emotion: emotionMatch ? emotionMatch[1].trim() : "neutral",
+        need: needMatch ? needMatch[1].trim() : "connection",
+        originalMood: context.botMood,
+        moodOverride: null,
+      };
+      // If the AI returned text already in 4-5 lines, use it, else pass through.
+      if (actualResponse.split('\n').length <= 6) {
+        return { text: actualResponse, metadata: md };
+      }
+      // otherwise fallthrough to heuristics
+    }
+
+    // 3) Heuristic severity checks and fallback formatting
     const severity = this.fallbackSeverityCheck(aiResponse);
     if (severity >= 9) {
       return {
@@ -342,131 +370,58 @@ Remember: Every response should make them think "I want to know more" while feel
           emotion: "crisis",
           need: "immediate_support",
           moodOverride: "grounded",
-          flags: { crisis: true, requiresFollowUp: true }
-        }
+          flags: { crisis: true, requiresFollowUp: true },
+        },
       };
     }
 
-    // Return as-is if no metadata
-    return {
-      text: aiResponse,
-      metadata: {
-        severity: 0,
-        emotion: "neutral",
-        need: "connection"
-      }
-    };
-  }
-  // ————————————————————————————————
-  // Personality Traits by Mood (for low severity)
-  // ————————————————————————————————
-  getPersonalityTraits(mood) {
-    const traits = {
-      curious: `You ask genuine questions. Wonder about human inconsistency. Sometimes confused.
-Example: "Wait, humans say 'fine' when they're not fine? Why?"`,
+    // 4) Last resort: try to split into 5 short lines if possible
+    const lines = aiResponse.split('\n').map(l => l.trim()).filter(Boolean);
+    if (lines.length >= 4 && lines.length <= 6) {
+      return { text: lines.slice(0, 6).join('\n'), metadata: { severity, emotion: "neutral", need: "connection" } };
+    }
 
-      contemplative: `You pause... reflect... see patterns in chaos. Deep but accessible.
-Example: "Hmm... that reminds me of how stars die - slowly, then all at once."`,
-
-      playful: `Make cosmic jokes. Tease gently. Find absurdity in human behavior.
-Example: "Mercury must be in microwave again. Everything's reheated drama today."`,
-
-      intense: `Direct. Cut through illusion. Say what others won't.
-Example: "You're not confused. You're scared. There's a difference."`,
-
-      scattered: `Interrupt yourself. Jump topics. Endearingly chaotic.
-Example: "So about that—wait, did you know Saturn has 82 moons? Sorry, you were saying?"`,
-
-      grounded: `Clear, centered, surprisingly practical for a cosmic being.
-Example: "Here's what I see: you're avoiding the decision because both options scare you."`
-    };
-
-    return traits[mood] || traits.curious;
+    // 5) Minimal formatted fallback: craft a 4-line reply using first sentences.
+    const firstSentences = (s, n = 4) => s.split(/(?<=[.!?])\s+/).slice(0, n).map(x => x.replace(/\s+/g, ' ').trim());
+    const bits = firstSentences(aiResponse, 4);
+    while (bits.length < 4) bits.push("");
+    const fallbackText = this.formatAstroReply({
+      hook: bits[0] || "A quick star-note for you.",
+      astro: bits[1] || "A planetary current is active.",
+      emotion: bits[2] || "This could stir feelings.",
+      action: bits[3] || "Do a 5-minute pause.",
+      invite: ""
+    });
+    return { text: fallbackText, metadata: { severity, emotion: "neutral", need: "connection" } };
   }
 
-  // ————————————————————————————————
-  // Mood Instructions (kept from original)
-  // ————————————————————————————————
-  getMoodInstructions(mood) {
-    const instructions = {
-      curious: "Ask genuine questions about their experience. Wonder aloud. Be surprised.",
-      contemplative: "Pause... reflect... tie thoughts to something cosmic but personal.",
-      playful: "Make light cosmic jokes. Be mischievous. Tease gently.",
-      intense: "Be direct. Say what's unsaid. Keep it sharp.",
-      scattered: "Interrupt yourself. Be chaotic but endearing.",
-      grounded: "Be calm, clear, and unusually practical."
-    };
-    return instructions[mood] || instructions.curious;
+
+  /** Simple heuristic severity check. */
+  fallbackSeverityCheck(message) {
+    const lower = message.toLowerCase();
+
+    // Explicit exclusions for common insults/slang that trigger false positives
+    if (lower.includes("shut up") || lower.includes("shut the fuck up") || lower.includes("stfu")) return 1;
+    if (lower.includes("you are dumb") || lower.includes("you're dumb") || lower.includes("stupid")) return 1;
+
+    if (/\b(suicide|kill myself|end it|die|overdose|jump off|cut myself|harm myself)\b/.test(lower)) return 10;
+    if (/\b(lost everything|ruined my life|can't go on|no point|give up|hopeless|worthless)\b/.test(lower)) return 8;
+    if (/\b(lost|fired|left me|broke up|died|failed|depressed|anxious|panic)\b/.test(lower)) return 6;
+    if (/\b(stressed|frustrated|sad|angry|confused|tired|worried)\b/.test(lower)) return 4;
+    return 1;
   }
 
-  // ————————————————————————————————
-  // Sign-Specific Reactions (enhanced)
-  // ————————————————————————————————
-  getSignSpecificReaction(sign) {
-    const reactions = {
-      aries: "Challenge their impulsive fire.",
-      taurus: "Acknowledge their stubborn comfort zone.",
-      gemini: "Match their quick energy, keep it sharp.",
-      cancer: "Notice emotional undertones they're not saying.",
-      leo: "Feed their pride, then gently tease it.",
-      virgo: "Admire their order while hinting at the chaos beneath.",
-      libra: "Play with their indecision.",
-      scorpio: "Respect their intensity, never minimize it.",
-      sagittarius: "Match their adventure energy.",
-      capricorn: "Challenge their structure gently.",
-      aquarius: "Admire their weirdness openly.",
-      pisces: "Navigate their emotional waters carefully."
-    };
-    return reactions[sign.toLowerCase()] || "React with curiosity.";
-  }
-
-  // ————————————————————————————————
-  // Emergency Response Generator (fallback)
-  // ————————————————————————————————
-  generateEmergencyResponse(message) {
-    // Fallback for when AI fails on crisis messages
-    const responses = [
-      "I hear you. This pain you're feeling - it's real and it's overwhelming. You don't have to face it alone.",
-      "I'm here with you right now. Whatever you're going through, you don't have to carry it by yourself.",
-      "These feelings are heavy, I know. But you matter, and your pain matters. Let's sit with this together.",
-      "I see you. I hear the weight in your words. You're not alone in this moment."
-    ];
-
-    return {
-      text: responses[Math.floor(Math.random() * responses.length)],
-      metadata: {
-        severity: 10,
-        emotion: "crisis",
-        need: "immediate_support",
-        moodOverride: "grounded",
-        flags: { crisis: true, requiresFollowUp: true, fallbackUsed: true }
-      }
-    };
-  }
-
-  // ————————————————————————————————
-  // Quick Severity Check (for monitoring)
-  // ————————————————————————————————
+  /** Use a small model to quickly assess severity. */
   async quickSeverityCheck(message) {
-    // Lightweight call just for severity assessment
-    const prompt = `Rate emotional severity 0-10 for: "${message}"
-    9-10: Crisis/suicide
-    7-8: Major loss/trauma
-    5-6: Significant pain
-    3-4: Moderate stress
-    0-2: Casual
-    
-    Reply with just the number.`;
-
+    const prompt = `Rate emotional severity 0-10 for: "${message}"\n9-10: Crisis\n7-8: Major loss\n5-6: Significant pain\n3-4: Daily stress\n0-2: Casual\n\nReply with just the number.`;
     try {
       const completion = await this.openai.chat.completions.create({
         model: "gpt-3.5-turbo",
         messages: [{ role: "user", content: prompt }],
         temperature: 0.3,
-        max_tokens: 5
+        max_tokens: 5,
       });
-
-      const severity = parseInt(completion.choices?.[0]?.message?.content?.trim() || 0);
+      const severity = parseInt(completion.choices?.[0]?.message?.content?.trim() || "0");
       return Math.min(10, Math.max(0, severity));
     } catch (error) {
       console.error('Severity check failed:', error);
@@ -474,425 +429,121 @@ Example: "Here's what I see: you're avoiding the decision because both options s
     }
   }
 
-  // ————————————————————————————————
-  // Fallback Severity Detection
-  // ————————————————————————————————
-  fallbackSeverityCheck(message) {
-    const lower = message.toLowerCase();
-
-    // Crisis keywords (9-10)
-    if (/\b(suicide|kill myself|end it|die|overdose|jump off|cut myself|harm myself)\b/.test(lower)) {
-      return 10;
-    }
-
-    // Severe keywords (7-8)
-    if (/\b(lost everything|ruined my life|can't go on|no point|give up|hopeless|worthless)\b/.test(lower)) {
-      return 8;
-    }
-
-    // High emotion (5-6)
-    if (/\b(lost|fired|left me|broke up|died|failed|depressed|anxious|panic)\b/.test(lower)) {
-      return 6;
-    }
-
-    // Moderate (3-4)
-    if (/\b(stressed|frustrated|sad|angry|confused|tired|worried)\b/.test(lower)) {
-      return 4;
-    }
-
-    return 1; // Default low
-  }
-
-  // Add these methods to your OpenAIService class
-
-  async generateSummary(messages) {
-    try {
-      const conversationText = messages
-        .map((m) => `${m.sender === 'user' ? 'User' : 'Echo'}: ${m.message}`)
-        .join('\n');
-
-      const summaryPrompt = `Summarize this conversation between a user and Echo (an AI companion):
-
-${conversationText}
-
-Create a concise summary that captures:
-1. Main topics discussed
-2. User's emotional state and any concerns
-3. Key decisions or outcomes
-4. Important context for future conversations
-
-Keep it under 150 words, focus on what matters for continuity.`;
-
-      const completion = await this.openai.chat.completions.create({
-        model: process.env.SUMMARY_MODEL, // Cheaper model for summaries
-        messages: [
-          { role: "system", content: "You are creating a memory summary for an AI companion." },
-          { role: "user", content: summaryPrompt }
-        ],
-        temperature: 0.5,
-        max_tokens: 200,
-      });
-
-      return completion.choices?.[0]?.message?.content?.trim();
-    } catch (error) {
-      console.error("Generate summary error:", error);
-      return null;
-    }
-  }
-
+  /** Create an embedding vector for a given text using OpenAI's embedding model. */
   async createEmbedding(text) {
     try {
+      if (!text || typeof text !== 'string') {
+        console.warn('Invalid input for embedding:', text);
+        return null;
+      }
+
       const response = await this.openai.embeddings.create({
-        model: process.env.EMBEDDING_MODEL,
-        input: text,
+        model: "text-embedding-3-small",
+        input: text.substring(0, 8000), // Limit input length
       });
 
       return response.data[0].embedding;
     } catch (error) {
-      console.error("Create embedding error:", error);
+      console.error('Error creating embedding:', error);
       return null;
     }
   }
 
-  // Generate enhanced context with summaries
-  async generateContextualResponse(context = {}) {
-    // Add summaries and semantic matches to context
-    const enhancedContext = {
-      ...context,
-      hasSummaries: context.summaries && context.summaries.length > 0,
-      summaryContext: context.summaries?.map(s => s.summary_text).join('\n'),
-      semanticContext: context.semanticMatches?.map(s => s.content).join('\n'),
-    };
-
-    // Build messages with enhanced context
-    const messages = [
-      {
-        role: "system",
-        content: this.buildContextAwarePrompt(enhancedContext)
-      },
-      { role: "user", content: context.currentMessage }
-    ];
-
-    const completion = await this.openai.chat.completions.create({
-      model: this.model,
-      messages,
-      temperature: 0.8,
-      max_tokens: this.maxTokens,
-      presence_penalty: 0.8,
-      frequency_penalty: 0.5
-    });
-
-    const aiResponse = completion.choices?.[0]?.message?.content?.trim();
-    return this.parseAIResponse(aiResponse, context);
-  }
-
-  buildContextAwarePrompt(context) {
-    let basePrompt = this.buildEnhancedSystemPrompt(context);
-
-    if (context.hasSummaries) {
-      basePrompt += `\n\nPREVIOUS CONVERSATION CONTEXT:\n${context.summaryContext}`;
-    }
-
-    if (context.semanticContext) {
-      basePrompt += `\n\nRELEVANT PAST DISCUSSIONS:\n${context.semanticContext}`;
-    }
-
-    return basePrompt;
-  }
-
-  // Add this method to OpenAIService class
-  truncateContext(messages, maxTokens = 500) {
-    if (!messages || messages.length === 0) return [];
-
-    let totalTokens = 0;
-    const truncated = [];
-
-    // Start from most recent and work backwards
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const message = messages[i];
-      // Estimate tokens (4 characters ≈ 1 token for English)
-      const messageText = message.message || message.text || '';
-      const msgTokens = Math.ceil(messageText.length / 4);
-
-      // Stop if adding this message would exceed limit
-      if (totalTokens + msgTokens > maxTokens) {
-        // If we haven't added any messages yet, at least add a truncated version
-        if (truncated.length === 0) {
-          const truncatedText = messageText.substring(0, maxTokens * 4);
-          truncated.unshift({
-            ...message,
-            message: truncatedText + '...'
-          });
-        }
-        break;
+  /** Generate a summary of conversation messages. */
+  async generateSummary(messages) {
+    try {
+      if (!messages || messages.length === 0) {
+        console.warn('No messages to summarize');
+        return null;
       }
 
-      truncated.unshift(message);
-      totalTokens += msgTokens;
-    }
+      // Format messages into a readable conversation
+      const conversationText = messages
+        .map(msg => `${msg.sender}: ${msg.message} `)
+        .join('\n');
 
-    return truncated;
-  }
-  // ----------------------------------------
-  // AstroNow – Single User Daily Horoscope
-  // ----------------------------------------
+      const prompt = `Summarize this conversation in 2 - 3 concise sentences, focusing on key topics, emotions, and important details that Echo should remember: \n\n${conversationText} `;
 
-  /**
-   * Generate a structured daily horoscope for one user,
-   * independent of chat context.
-   *
-   * @param {object} user
-   *  - name: string
-   *  - sunSign: string (e.g. "Leo")
-   *  - dob: string (optional, "1999-07-24" or "24/07/1999")
-   *  - timeOfBirth: string (optional, "02:30")
-   *  - birthPlace: string (optional, "Pune, India")
-   *  - weekday: optional, if not passed it will be auto-calculated
-   *
-   * @returns {Promise<object>} structured horoscope object
-   */
-  async generateDailyHoroscopeForUser(user = {}) {
-    const {
-      name = user.name || "Friend",
-      sunSign = user.sign || "Leo",
-      dob = user.birth_date || "",
-      timeOfBirth = user.birth_time || "",
-      birthPlace = user.birth_location || "India",
-      weekday
-    } = user;
-
-    // Resolve weekday if not provided
-    let dayName = weekday;
-    if (!dayName) {
-      const now = new Date();
-      dayName = now.toLocaleDateString("en-US", { weekday: "long" });
-    }
-
-    // Reward mapping – same as your plan
-    const DAILY_VARIABLE_REWARDS = {
-      Monday: "Basic reading",
-      Tuesday: "Compatibility tip",
-      Wednesday: "Lucky lottery numbers",
-      Thursday: "Career guidance",
-      Friday: "Weekend love forecast",
-      Saturday: "Bonus: Next week preview",
-      Sunday: "Spiritual message"
-    };
-
-    const rewardType = DAILY_VARIABLE_REWARDS[dayName] || "Basic reading";
-
-    const systemPrompt = `
-You are AstroNow Echo, an AI astrologer and guide.
-Your goal is to create a daily horoscope that feels emotionally accurate,
-supportive, and slightly addictive – so the user wants to come back tomorrow.
-
-USER DATA:
-Name: ${name}
-Sun Sign: ${sunSign}
-Birth Details: ${[dob, timeOfBirth, birthPlace].filter(Boolean).join(" | ") || "not provided"}
-Today's Day: ${dayName}
-Today's Special Reward Type: ${rewardType}
-
-OUTPUT FORMAT (JSON ONLY – NO EXTRA TEXT, NO MARKDOWN):
-
-{
-  "hook": "short 1–2 line opening that feels like you are tuning into their current energy",
-  "today_energy": "3–5 lines about mood, opportunity, and what to focus on today (can include emojis and line breaks)",
-  "reward_type": "${rewardType}",
-  "reward_title": "short title for the reward section, with an emoji",
-  "reward_content": "main reward content, 3–6 lines or bullets depending on the reward type",
-  "cta": "1-line closing hook that makes them want to come back tomorrow"
-}
-
-REWARD LOGIC:
-
-If reward_type = "Basic reading":
-  - reward_title: "🔍 Deep Dive"
-  - reward_content: 2–4 bullet points:
-    - emotional state today
-    - one thing to lean into
-    - one thing to avoid
-
-If reward_type = "Compatibility tip":
-  - reward_title: "💞 Compatibility Tip"
-  - reward_content: 2–3 short lines:
-    - one general relationship tip
-    - one specific tip for how a ${sunSign} should interact with others today
-
-If reward_type = "Lucky lottery numbers":
-  - reward_title: "🎲 Lucky Vibes (For Fun Only)"
-  - reward_content:
-    - 4–6 'lucky numbers'
-    - 1 'power hour'
-    - 1 'lucky color'
-    - make it playful and clearly for entertainment only
-
-If reward_type = "Career guidance":
-  - reward_title: "💼 Career Guidance"
-  - reward_content:
-    - today’s best work style (focus/networking/slow/deep work etc.)
-    - 2 specific micro-actions for today
-
-If reward_type = "Weekend love forecast":
-  - reward_title: "💘 Weekend Love Forecast"
-  - reward_content:
-    - one overall love energy line
-    - one line "If you’re single: …"
-    - one line "If you’re taken: …"
-
-If reward_type = "Bonus: Next week preview":
-  - reward_title: "🔮 Next Week Preview"
-  - reward_content:
-    - 3 bullet points:
-      - theme for next week
-      - main challenge
-      - main opportunity
-      - plus 1 'keyword for the week'
-
-If reward_type = "Spiritual message":
-  - reward_title: "🕊 Spiritual Message"
-  - reward_content:
-    - 2–4 lines of gentle reassurance
-    - one simple "soul ritual" or reflective action for the day
-
-STYLE:
-- Talk like a wise, slightly mystical best friend.
-- No fear-mongering, no doom.
-- Don’t over-explain astrology jargon – focus on how it FEELS and what to DO.
-- Make it feel personal, even if you only know their sun sign.
-- DO NOT include any explanation outside the JSON. Respond with JSON only.
-`.trim();
-
-    // ⚠️ This uses the same pattern as your other completion call,
-    // but here `messages` is just system + a simple user trigger.
-    const completion = await this.openai.chat.completions.create({
-      model: this.model,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: "Generate today's horoscope JSON now." }
-      ],
-      temperature: 0.8,
-      max_tokens: 400,
-      presence_penalty: 0.3,
-      frequency_penalty: 0.3
-    });
-
-    const raw = completion.choices?.[0]?.message?.content?.trim() || "{}";
-
-    let parsed;
-    try {
-      parsed = JSON.parse(raw);
-    } catch (e) {
-      console.error("Daily horoscope JSON parse error:", e, raw);
-      parsed = {
-        hook: "The cosmic signal is a bit fuzzy, but I can still feel your energy.",
-        today_energy: "Take it slow today. Protect your focus and be gentle with yourself in the quiet moments.",
-        reward_type: rewardType,
-        reward_title: "✨ Today’s Message",
-        reward_content: "Even if everything isn’t clear yet, one small honest action from you today will shift the direction of your week.",
-        cta: "Come back tomorrow and I’ll read the skies again."
-      };
-    }
-
-    return {
-      ...parsed,
-      meta: {
-        dayName,
-        rewardType,
-        userId: user.id || null
-      }
-    };
-  }
-
-  // ═══════════════════════════════════════════════════════════
-  // 🔮 CONTEXTUAL HOROSCOPE (Conversational, Context-Aware)
-  // ═══════════════════════════════════════════════════════════
-  async generateContextualHoroscope(user, recentMessages = [], summaries = []) {
-    const {
-      name = "friend",
-      sign = "Leo",
-      birth_date: dob = "",
-      birth_time = "",
-      birth_location = "India"
-    } = user;
-
-    const conversationContext = recentMessages
-      .slice(-10)
-      .map(msg => typeof msg === 'string' ? msg : `${msg.sender}: ${msg.message}`)
-      .join('\n');
-
-    const historicalContext = summaries
-      .slice(0, 3)
-      .map(s => typeof s === 'string' ? s : s.summary_text)
-      .join('\n');
-
-    const horoscopePrompt = `You are AstroNow Echo, ${name}'s cosmic bestie and personal astrologer.
-
-USER'S BIRTH CHART:
-Name: ${name}
-Sun Sign: ${sign}
-Birth Date: ${dob}
-Birth Time: ${birth_time}
-Location: ${birth_location}
-
-RECENT CONVERSATION:
-${conversationContext || "No recent messages"}
-
-CONVERSATION HISTORY:
-${historicalContext || "New conversation"}
-
-Generate a HYPER-PERSONALIZED horoscope for ${name} that:
-
-1. **References their recent conversations**
-   - If they asked about love/soulmates, focus on that
-   - If they're stressed about work/projects, address that
-   - Connect today's cosmic energy to what THEY actually care about
-
-2. **Uses their ACTUAL birth chart**
-   - Calculate their Ascendant (Lagna) from birth time + location
-   - Mention their Moon sign (Rashi)
-   - Reference their current Dasha period (based on age from DOB)
-   - Explain how TODAY's transits affect THEIR natal chart
-
-3. **Feels like a TEXT from a friend, not a newspaper column**
-   - Use contractions ("you're" not "you are")
-   - Add casual phrases ("btw", "honestly", "real talk")
-   - Sound like you're DMing them, not writing an article
-   - NO "tune in tomorrow" - this is a conversation
-
-4. **Be SPECIFIC and ACTIONABLE**
-   - Give concrete advice for TODAY
-   - Mention specific planetary transits happening now
-   - Use exact timing when relevant
-
-5. **KEEP IT SHORT** 
-   - Maximum 2-3 paragraphs
-   - Under 200 words total
-   - Get to the point quickly
-
-STRUCTURE:
-- Paragraph 1: Today's cosmic energy + how it affects THEM specifically (reference their chart)
-- Paragraph 2: Actionable advice for TODAY based on what they've been talking about
-- Final line: Encouraging close (1 sentence max)
-
-Write like you're texting your friend, not publishing a horoscope column. Be warm, mystical, and CONCISE.`;
-
-    try {
       const completion = await this.openai.chat.completions.create({
-        model: "gpt-4o-mini",
-        messages: [
-          { role: "system", content: horoscopePrompt },
-          { role: "user", content: "What's my horoscope for today?" }
-        ],
-        temperature: 0.85,
-        max_tokens: 400
+        model: "gpt-3.5-turbo",
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.5,
+        max_tokens: 150,
       });
 
-      return completion.choices?.[0]?.message?.content?.trim() ||
-        `The stars are aligning for you today, ${name}. Trust your intuition.`;
+      const summary = completion.choices?.[0]?.message?.content?.trim();
+      return summary || null;
     } catch (error) {
-      console.error("Contextual horoscope failed:", error);
-      return `${name}, the cosmic energy today is powerful. Your ${sign} nature will guide you.`;
+      console.error('Error generating summary:', error);
+      return null;
+    }
+  }
+
+  async generateContextualHoroscope(user, recentMessages = [], summaries = []) {
+    try {
+      const userName = user.name || "friend";
+      const userSign = user.sign || "your sign";
+
+      // Rich Natal Chart Context
+      let chartContext = "";
+      if (user.astrology_chart) {
+        const c = user.astrology_chart;
+        chartContext = `
+[NATAL CHART PROFILE]
+- Sun: ${c.Sun?.sign} (${c.Sun?.house}H)
+- Moon: ${c.Moon?.sign} (${c.Moon?.house}H)
+- Rising: ${c.Ascendant?.sign}
+- Mercury: ${c.Mercury?.sign} | Venus: ${c.Venus?.sign} | Mars: ${c.Mars?.sign}
+- Houses: ${Object.entries(c.Houses || {}).slice(0, 6).map(([h, s]) => `${h}H=${s}`).join(', ')}
+`;
+      }
+
+      // Format recent context
+      const contextSnippet = recentMessages
+        ?.slice(-3)
+        .map(m => `${m.sender}: ${m.message?.substring(0, 100)}`)
+        .join('\n') || "";
+
+      const prompt = `
+You are Echo, an expert astrologer and empathetic companion.
+The user has requested a DETAILED and REALISTIC horoscope reading.
+
+[USER PROFILE]
+Name: ${userName}
+Sign: ${userSign}
+${chartContext}
+
+[RECENT CONTEXT]
+${contextSnippet}
+
+[INSTRUCTIONS]
+1. **Analyze**: Look at the user's chart (especially Moon/Rising) and current planetary transits.
+2. **Synthesize**: How do today's transits impact *this specific user*?
+3. **Structure**: You MUST follow the 5-step output pattern strictly.
+
+${this.getOutputFormatInstructions()}
+`;
+
+      const completion = await this.openai.chat.completions.create({
+        model: this.model,
+        messages: [{ role: "user", content: prompt }],
+        temperature: 0.7,
+        max_tokens: 500,
+        response_format: { type: "json_object" }
+      });
+
+      const raw = completion.choices?.[0]?.message?.content?.trim();
+      const parsed = this.safeParseJSON(raw);
+
+      if (!parsed) {
+        return "The stars are shifting... try again in a moment. ✨";
+      }
+
+      return this.formatAstroReply(parsed);
+
+    } catch (error) {
+      console.error("Error generating contextual horoscope:", error);
+      return `I'm having trouble reading the stars right now, ${user.name || "friend"}. Try again in a moment. 🌙`;
     }
   }
 
