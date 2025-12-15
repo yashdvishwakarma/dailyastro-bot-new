@@ -98,7 +98,7 @@ class ConversationHandler {
       // console.log(`[AI] Mood=${botMood} | Sign=${user.sign}`);
 
       // 4️⃣ Check for horoscope request
-      const horoscopeKeywords = ['horoscope', 'daily reading', 'what do the stars say', 'cosmic forecast', 'astrology today'];
+      const horoscopeKeywords = ['horoscope', 'daily reading', 'what do the stars say', 'cosmic forecast', 'astrology today', 'reading', 'menu'];
       const isHoroscopeRequest = horoscopeKeywords.some(keyword => message.toLowerCase().includes(keyword));
 
       if (isHoroscopeRequest && user.sign) {
@@ -119,13 +119,15 @@ class ConversationHandler {
         currentMessage: message,
         userSign: user.sign,
         userName: user.name,
-        userBirthDate: user.birth_date, // NEW: Add birth date for date comparison
+        userBirthDate: user.birth_date,
+        astrologyChart: user.astrology_chart, // NEW: Pass full chart for rich context
         botMood,
         messageCount,
         energyLevel: this.personality.energyLevel,
         // Already optimized from memory manager
         recentMessages: enhancedMemory.recentMessages,
         summaries: enhancedMemory.summaries,
+        echoBackstory: enhancedMemory.echoBackstory, // NEW: Echo's personal memories
         conversationState: enhancedMemory.conversationState, // NEW: Include state
         personalitySystemPrompt,
         preferredConversationStyle: style

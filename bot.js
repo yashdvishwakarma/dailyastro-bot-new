@@ -64,13 +64,13 @@ class AstroNowBot {
       personality: this.personality,
       dynamics: this.dynamics,
       memory: this.memory,
-      personalityService :this.personalityService
+      personalityService: this.personalityService
     };
 
     // Handlers
     this.conversationHandler = new ConversationHandler(services);
     this.onboardingHandler = new OnboardingHandler(services);
-    this.commandHandler = new CommandHandler(this.db,services);
+    this.commandHandler = new CommandHandler(this.db, services);
 
     await this.initializeBotConsciousness();
   }
@@ -163,7 +163,7 @@ class AstroNowBot {
       "*/30 * * * *",
       async () => await this.checkForSelfMessages()
     );
-       // 🧠 Daily insights (analytics)
+    // 🧠 Daily insights (analytics)
     cron.schedule("0 9 * * *", async () => await this.generateDailyInsights());
 
     // ✨ Daily horoscopes at 9 AM
@@ -191,6 +191,11 @@ class AstroNowBot {
     const chatId = msg.chat.id;
     const messageText = msg.text;
 
+    // Ignore non-text messages (photos, stickers, etc.)
+    if (!messageText) {
+      return;
+    }
+
     try {
       let user = await this.db.getUser(chatId);
       if (!user)
@@ -209,7 +214,8 @@ class AstroNowBot {
       let response;
       if (messageText.startsWith("/") && user?.name) {
         response = await this.commandHandler.handle(messageText, user);
-      } else if (user.stage === "new" || !user.name || !user.birth_date || !user.birth_time) {
+      } else if (user.stage !== "complete") {
+        // Route to onboarding if user hasn't completed all stages
         response = await this.onboardingHandler.handle(messageText, user);
       } else {
         response = await this.conversationHandler.handleMessage(
@@ -258,25 +264,25 @@ class AstroNowBot {
   }
 
   async monitorConversationHealth(chatId, session) {
-  // Only intervene if conversation is ACTUALLY dying
-  if (session.messageCount > 5 && session.depth < 0.2 && session.momentum < 0.3) {
-    setTimeout(async () => {
-      const user = await this.db.getUser(chatId);
-      const memory = await this.memory.getRandomMemory(chatId);
-      
-      // Only send if we have actual memory
-      if (memory && memory.content !== "something you mentioned earlier") {
-        const intervention = this.dynamics.generateLeadMove({
-          sign: user.sign,
-          element: user.element,
-          memory: memory
-        });
-        
-        await this.bot.sendMessage(chatId, intervention);
-      }
-    }, 30000);  // Wait 30 seconds, not 10
+    // Only intervene if conversation is ACTUALLY dying
+    if (session.messageCount > 5 && session.depth < 0.2 && session.momentum < 0.3) {
+      setTimeout(async () => {
+        const user = await this.db.getUser(chatId);
+        const memory = await this.memory.getRandomMemory(chatId);
+
+        // Only send if we have actual memory
+        if (memory && memory.content !== "something you mentioned earlier") {
+          const intervention = this.dynamics.generateLeadMove({
+            sign: user.sign,
+            element: user.element,
+            memory: memory
+          });
+
+          await this.bot.sendMessage(chatId, intervention);
+        }
+      }, 30000);  // Wait 30 seconds, not 10
+    }
   }
-}
 
   calculateResponseTiming(message, session, user) {
     const baseDelay = 1000;
@@ -410,27 +416,26 @@ class AstroNowBot {
     const metrics = await this.metrics.getDailyMetrics();
     // console.log("Daily Metrics:", metrics);
     if (!metrics?.data) {
-    return `
+      return `
 📊 DAILY METRICS REPORT
 ━━━━━━━━━━━━━━━━━━━
 Total Users: ${metrics.total_users}
-Avg Messages Before Vulnerability: ${
-      metrics.avg_messages_before_vulnerability || "N/A"
-    }
+Avg Messages Before Vulnerability: ${metrics.avg_messages_before_vulnerability || "N/A"
+        }
 Ghosted After 5 Messages: ${metrics.ghost_after_5} users
 Engaged with Greeting: ${metrics.engaged_greetings}
 Deflected Greeting: ${metrics.deflected_greetings}
 Engagement Rate: ${Math.round(
-      (metrics.engaged_greetings /
-        (metrics.engaged_greetings + metrics.deflected_greetings)) *
-        100
-    )}%
+          (metrics.engaged_greetings /
+            (metrics.engaged_greetings + metrics.deflected_greetings)) *
+          100
+        )}%
     `;
-  }
+    }
   }
 
 
-    async sendDailyHoroscopes() {
+  async sendDailyHoroscopes() {
     console.log("✨ Running sendDailyHoroscopes job...");
 
     const users = await this.db.getAllUsers();

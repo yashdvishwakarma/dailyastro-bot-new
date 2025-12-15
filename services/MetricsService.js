@@ -13,10 +13,10 @@ class MetricsService {
     }
     return this.db;
   }
-  
 
 
-  
+
+
   async trackVulnerability(userId, messageNumber, message, severity, emotion) {
     // Track when users first share something vulnerable
 
@@ -25,7 +25,7 @@ class MetricsService {
       'SELECT id FROM vulnerability_metrics WHERE user_id = $1 LIMIT 1',
       [userId]
     );
-    
+
     if (!existing.rows.length) {
       // First vulnerable share
       await db.query(`
@@ -33,7 +33,7 @@ class MetricsService {
         (user_id, message_number, vulnerability_type, message, severity)
         VALUES ($1, $2, $3, $4, $5)
       `, [userId, messageNumber, emotion, message, severity]);
-      
+
       // console.log(`📊 First vulnerability at message #${messageNumber}: "${message.substring(0, 50)}..."`);
     }
   }
@@ -41,7 +41,7 @@ class MetricsService {
 
 
 
-  
+
   async trackGhosting(userId, lastMessageCount) {
     // Track if user ghosts after 5 messages
     const db = await this.getDb();
@@ -55,7 +55,7 @@ class MetricsService {
       // `, [userId, { message_count: 5, timestamp: new Date() }]);
     }
   }
-  
+
   async trackResponseToGreeting(userId, response) {
     // Track how users respond to "How's your inner world?"
     const responseTypes = {
@@ -63,7 +63,7 @@ class MetricsService {
       engage: /chaotic|peaceful|rough|tired|stressed|anxious|happy|excited/i,
       deep: /lost|confused|struggling|depressed|lonely|scared/i
     };
-    
+
     let responseType = 'other';
     for (const [type, pattern] of Object.entries(responseTypes)) {
       if (pattern.test(response)) {
@@ -72,21 +72,21 @@ class MetricsService {
       }
     }
 
-     const db = await this.getDb();
+    const db = await this.getDb();
     db.logConversationMetric(userId, 'greeting_response', { type: responseType, response: response.substring(0, 100) });
     // await db.query(`
     //   INSERT INTO conversation_metrics 
     //   (user_id, metric_type, metric_value)
     //   VALUES ($1, 'greeting_response', $2)
     // `, [userId, { type: responseType, response: response.substring(0, 100) }]);
-    
+
     // console.log(`📊 Greeting response type: ${responseType}`);
   }
-  
+
   // async getDailyMetrics() {
 
   //   const db = await this.getDb();
- 
+
   //   const metrics = await db.query(`
   //     SELECT 
   //       COUNT(DISTINCT user_id) as total_users,
@@ -111,57 +111,65 @@ class MetricsService {
   // }
 
   async getDailyMetrics() {
-  try {
-    const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data, error } = await this.supabase
-      .from('conversation_metrics')
-      .select('user_id, metric_type, metric_value, created_at')
-      .gt('created_at', since);
+    try {
+      const since = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+      const { data, error } = await this.supabase
+        .from('conversation_metrics')
+        .select('user_id, metric_type, metric_value, created_at')
+        .gt('created_at', since);
 
-    if (error) throw error;
-    if (!data || data.length === 0) return null;
+      if (error) throw error;
+      if (!data || data.length === 0) return null;
 
-    const users = new Set();
-    let ghostAfter5 = 0;
-    let engaged = 0;
-    let deflected = 0;
-    const messageCounts = [];
+      const users = new Set();
+      let ghostAfter5 = 0;
+      let engaged = 0;
+      let deflected = 0;
+      const messageCounts = [];
 
-    for (const row of data) {
-      users.add(row.user_id);
-      const val = typeof row.metric_value === 'string' ? JSON.parse(row.metric_value) : row.metric_value;
+      for (const row of data) {
+        users.add(row.user_id);
+        const val = typeof row.metric_value === 'string' ? JSON.parse(row.metric_value) : row.metric_value;
 
-      if (row.metric_type === 'potential_ghost') ghostAfter5++;
-      if (row.metric_type === 'greeting_response') {
-        if (val.type === 'engage') engaged++;
-        if (val.type === 'deflect') deflected++;
+        if (row.metric_type === 'potential_ghost') ghostAfter5++;
+        if (row.metric_type === 'greeting_response') {
+          if (val.type === 'engage') engaged++;
+          if (val.type === 'deflect') deflected++;
+        }
+        if (val?.message_count) messageCounts.push(val.message_count);
       }
-      if (val?.message_count) messageCounts.push(val.message_count);
+
+      const avgMessages =
+        messageCounts.length > 0
+          ? messageCounts.reduce((a, b) => a + b, 0) / messageCounts.length
+          : 0;
+
+      const metrics = {
+        total_users: users.size,
+        avg_messages_before_vulnerability: avgMessages,
+        ghost_after_5: ghostAfter5,
+        engaged_greetings: engaged,
+        deflected_greetings: deflected
+      };
+
+      console.log('📊 Daily metrics collected:', metrics);
+      return metrics;
+    } catch (err) {
+      console.error('Error computing daily metrics:', err);
+      return null;
     }
-
-    const avgMessages =
-      messageCounts.length > 0
-        ? messageCounts.reduce((a, b) => a + b, 0) / messageCounts.length
-        : 0;
-
-    const metrics = {
-      total_users: users.size,
-      avg_messages_before_vulnerability: avgMessages,
-      ghost_after_5: ghostAfter5,
-      engaged_greetings: engaged,
-      deflected_greetings: deflected
-    };
-
-    console.log('📊 Daily metrics collected:', metrics);
-    return metrics;
-  } catch (err) {
-    console.error('Error computing daily metrics:', err);
-    return null;
   }
-}
-// Log any metric (replaces all raw INSERT INTO conversation_metrics ...)
+  // Log any metric (replaces all raw INSERT INTO conversation_metrics ...)
 
 
+  // Static helpers for OpenAIService usage
+  static increment(metric) {
+    console.log(`[Metrics] Increment: ${metric}`);
+  }
+
+  static log(metric, data) {
+    console.log(`[Metrics] Log: ${metric}`, data);
+  }
 }
 
 export default MetricsService;
