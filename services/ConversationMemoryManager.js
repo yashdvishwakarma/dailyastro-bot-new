@@ -108,38 +108,29 @@ class ConversationMemoryManager {
     }
   }
 
-  async searchEchoBackstory(queryEmbedding, limit = 2) {
+  async searchKnowledgeBase(queryEmbedding, kbId, limit = 2) {
     try {
       const db = await getDatabase();
       if (!db.supabase) {
-        console.warn('Supabase not available for backstory search');
+        console.warn('Supabase not available for knowledge base search');
         return [];
       }
-      console.log('🧪 DEBUG: searchEchoBackstory called');
-      console.log('   - Embedding length:', queryEmbedding?.length);
-      console.log('   - Limit:', limit);
-      console.log('   - Threshold: 0.1');
-      console.log('   - Chat ID: ECHO_CORE');
 
       const { data, error } = await db.supabase.rpc('match_embeddings', {
         query_embedding: queryEmbedding,
         match_threshold: 0.1,
         match_count: limit,
-        match_chat_id: 'ECHO_CORE'
+        match_chat_id: kbId
       });
 
       if (error) {
         console.error('❌ RPC Error:', error);
         return [];
       }
-      console.log(`✅ RPC Success: ${data?.length || 0} results`);
-      if (data?.length > 0) {
-        console.log('   First result similarity:', data[0].similarity);
-        console.log('   First result text (content):', (data[0].content || data[0].summary_text || '').substring(0, 100));
-      }
+
       return data || [];
     } catch (err) {
-      console.error('Error in searchEchoBackstory:', err);
+      console.error('Error in searchKnowledgeBase:', err);
       return [];
     }
   }

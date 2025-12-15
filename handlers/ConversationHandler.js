@@ -11,6 +11,7 @@ import MetricsService from '../services/MetricsService.js';
 import getMemoryManager from '../services/ConversationMemoryManager.js';
 import PersonalityService from "../services/PersonalityService.js";
 import getStateTracker from '../services/ConversationStateTracker.js';
+import BotEngine from '../services/BotEngine.js';
 
 class ConversationHandler {
   constructor(services = {}) {
@@ -44,147 +45,109 @@ class ConversationHandler {
   // ───────────────────────────────────────────────
   async handleMessage(message, user, chatId) {
     try {
-
       const db = await this.getDb();
+
+      // 1. Metric checks
       const messageCount = user.total_messages || 0;
-
-      // console.log("user", user);
-      // Metric checks
       if (messageCount === 5) await this.metrics.trackGhosting(user.id, messageCount);
-      if (messageCount === 1) await this.metrics.trackResponseToGreeting(user.id, message);
 
-      // Handle greetings early
-      // const greetingResponse = await this.handleGreeting(message, user);
-      // if (greetingResponse) {
-      //   // console.log(`[Greeting] ${message} also the user data`,user);
-      //   await this.storeAndLearn(message, greetingResponse.text, null, user);
-      //   return greetingResponse.text;
-      // }
+      // 2. Load Bot Configuration (Middleware Pivot)
+      // Retrieve the specific personality/config for this user/session
+      // 2. Load Bot Configuration (Middleware Pivot)
+      // TEST MODE: Prefer 'SalesBot' to verify RAG, fallback to 'Echo'
+      let { data: botConfig } = await db.supabase
+        .from('bot_configs')
+        .select('*')
+        .eq('name', 'SalesBot')
+        .single();
 
-      // 1️⃣ Analyze message
-      const analysis = await this.analyzeMessage(message, user);
+      console.log(`🤖 DEBUG: Loaded Config for 'SalesBot':`, botConfig ? "FOUND" : "NULL");
 
-      // 2️⃣ Determine mood
-      const botMood = await this.personality.determineMood(analysis.context);
+      if (!botConfig) {
+        const { data: echoConfig } = await db.supabase
+          .from('bot_configs')
+          .select('*')
+          .eq('name', 'Echo')
+          .single();
+        botConfig = echoConfig;
+      }
 
-      // 2.5️⃣ UPDATE CONVERSATION STATE (Critical Fix)
-      // We must update the state with the CURRENT message before generating the response
-      // otherwise the AI sees stale data (e.g. thinking we're still talking about the uncle)
+      if (!botConfig) {
+        throw new Error("Bot Configuration missing. Please run middleware_setup.sql");
+      }
+
+      // 3. Update Conversation State (Tracker)
       const currentState = await this.stateTracker.getState(chatId);
       await this.stateTracker.updateState(chatId, message, currentState);
 
-      // 3️⃣ Build OpenAI context with ENHANCED MEMORY
-      const enhancedMemory = await this.memoryManager.getEnhancedContext(chatId, message);
-      const style = user.preferred_conversation_style || "bestie";
-      const profile = this.personalityInject.getProfile(style);
-      const personalitySystemPrompt = this.personalityInject.getSystemPrompt(style, user);
+      // 4. Retrieve Context (Memory + RAG)
+      // Get standard chat history
+      const recentMessages = await db.getFullRecentMessages(chatId, 5);
 
-      // const aiContext = {
-      //   message,
-      //   currentMessage: message,
-      //   userSign: user.sign,
-      //   userName: user.name,
-      //   element: user.element,
-      //   botMood,
-      //   messageCount,
-      //   energyLevel: this.personality.energyLevel,
-      //   recentMessages: enhancedMemory.recentMessages || await db.getRecentMessages(chatId, 5),
-      //   summaries: enhancedMemory.summaries,  // NEW: Historical summaries
-      //   semanticMatches: enhancedMemory.semanticMatches,  // NEW: Relevant past context
-      //   threadDepth: analysis.context.threadDepth || 0,
-      //   detectedNeed: analysis.intent.need,
-      //   threadEmotion: analysis.subtext.emotion
-      // };
-      // console.log(`[AI] Mood=${botMood} | Sign=${user.sign}`);
+      // Get RAG Knowledge (if configured)
+      let ragContent = "";
+      if (botConfig.knowledge_base_id) {
+        // Use the memory manager to search the specific KB
+        const embedding = await this.ai.createEmbedding(message);
+        if (embedding) {
+          // Increased limit to 10 to ensure we capture widely separated context (like Intro vs Definition)
+          const results = await this.memoryManager.searchKnowledgeBase(embedding, botConfig.knowledge_base_id, 10);
+          if (results && results.length > 0) {
+            ragContent = results.map(r => r.content || r.summary_text).join("\n---\n");
 
-      // 4️⃣ Check for horoscope request
-      const horoscopeKeywords = ['horoscope', 'daily reading', 'what do the stars say', 'cosmic forecast', 'astrology today', 'reading', 'menu'];
-      const isHoroscopeRequest = horoscopeKeywords.some(keyword => message.toLowerCase().includes(keyword));
-
-      if (isHoroscopeRequest && user.sign) {
-        console.log(`[Horoscope Request] Generating contextual horoscope for ${user.name}`);
-        const horoscopeResponse = await this.ai.generateContextualHoroscope(
-          user,
-          enhancedMemory.recentMessages || [],
-          enhancedMemory.summaries || []
-        );
-        await this.storeAndLearn(message, horoscopeResponse, analysis, user);
-        return horoscopeResponse;
+            // RAG VERIFICATION LOGGING
+            console.log(`\n📚 RAG VERIFICATION: Found ${results.length} chunks from [${botConfig.knowledge_base_id}]`);
+            results.forEach((r, i) => {
+              const source = r.metadata?.source ? r.metadata.source.split(/[\\/]/).pop() : 'Unknown';
+              console.log(`   [Chunk ${i + 1}] Source: ${source}`);
+            });
+          } else {
+            console.log(`\n📚 RAG VERIFICATION: No relevant docs found for query in [${botConfig.knowledge_base_id}]`);
+          }
+        }
       }
 
-      // 5️⃣ Generate response
+      // 5. Instantiate Bot Engine (Per Request or Cached)
+      // We create a fresh instance to ensure config is up to date
+      const engine = new BotEngine(botConfig);
 
-      const aiContext = {
-        message: message,
-        currentMessage: message,
-        userSign: user.sign,
-        userName: user.name,
-        userBirthDate: user.birth_date,
-        astrologyChart: user.astrology_chart, // NEW: Pass full chart for rich context
-        botMood,
-        messageCount,
-        energyLevel: this.personality.energyLevel,
-        // Already optimized from memory manager
-        recentMessages: enhancedMemory.recentMessages,
-        summaries: enhancedMemory.summaries,
-        echoBackstory: enhancedMemory.echoBackstory, // NEW: Echo's personal memories
-        conversationState: enhancedMemory.conversationState, // NEW: Include state
-        personalitySystemPrompt,
-        preferredConversationStyle: style
-        // Don't send these unless absolutely needed:
-        // - semanticMatches (already incorporated in summaries)
-        // - IDs, timestamps, metadata (not needed for generation)
-        // - threadDepth, detectedNeed (let AI figure it out)
+      // 6. Generate Response
+      const context = {
+        recentMessages: recentMessages.reverse().map(m => ({
+          role: m.sender === 'user' ? 'user' : 'assistant',
+          content: m.message
+        })),
+        rag_content: ragContent
       };
-      const aiResponse = await this.ai.generateResponse(aiContext);
-      console.log(`[AI Response]`, aiResponse);
-      // 5️⃣ Process AI response
-      let finalResponse;
-      let severity = 0;
 
-      if (typeof aiResponse === 'object' && aiResponse.metadata) {
-        finalResponse = aiResponse.text;
-        severity = aiResponse.metadata.severity;
+      console.log(`🤖 Generating response via BotEngine [Model: ${botConfig.model}]...`);
+      const response = await engine.generateResponse(message, context);
 
-        if (aiResponse.metadata.moodOverride) {
-          this.personality.shiftMood(aiResponse.metadata.moodOverride);
-          // console.log(`🔄 Mood override: ${botMood} → ${aiResponse.metadata.moodOverride}`);
-        }
+      // 7. Handle Output (Text or JSON)
+      let finalText = "";
+      let metadata = {};
 
-        await this.storeEmotionalState(user.id, {
-          severity: aiResponse.metadata.severity,
-          emotion: aiResponse.metadata.emotion,
-          need: aiResponse.metadata.need,
-          timestamp: new Date()
-        });
-
-        if (aiResponse.metadata.flags?.crisis) {
-          await this.handleCrisisAlert(user, message, aiResponse.metadata);
-        }
+      if (typeof response === 'string') {
+        finalText = response;
       } else {
-        finalResponse = aiResponse;
+        // Structured/Empathic mode
+        finalText = response.text || "I am here.";
+        metadata = response; // Store full metadata
       }
 
-      // 6️⃣ Humanization
-      // if (severity < 7) {
-      //   finalResponse = await this.humanize(finalResponse, botMood);
-      // }
+      // 8. Store & Learn
+      await this.storeAndLearn(message, finalText, null, user);
 
-      // 7️⃣ Learn + store
-      // console.log(`[Greeting yeahh] ${message} also the user data`,user);
-      await this.storeAndLearn(message, finalResponse, analysis, user);
+      // Optional: Store emotional state if present
+      if (metadata.severity) {
+        await this.storeEmotionalState(user.id, metadata);
+      }
 
-      return finalResponse;
+      return finalText;
+
     } catch (error) {
-      console.error('Conversation handling error:', error);
-
-      const severity = this.ai.fallbackSeverityCheck?.(message) || 0;
-      if (severity >= 9) {
-        const emergency = this.ai.generateEmergencyResponse(message);
-        return emergency.text;
-      }
-
-      return this.generateFallback(user);
+      console.error('ConversationHandler Error:', error);
+      return "I am currently undergoing a system upgrade. Please try again in a moment.";
     }
   }
 
